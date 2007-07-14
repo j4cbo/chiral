@@ -1,3 +1,5 @@
+"""Network event handling."""
+
 from chiral.core import tasklet, stats
 
 import time
@@ -14,20 +16,6 @@ class Looper(object):
 
 		self._close_list = []
 
-		self._reloaded = False
-
-	def wait_for_readable(self, sock, cb):
-		if sock in self._read_interest:
-			self._read_interest[sock].append(cb)
-		else:
-			self._read_interest[sock] = [ cb ]
-
-	def wait_for_writeable(self, sock, cb):
-		if sock in self._write_interest:
-			self._write_interest[sock].append(cb)
-		else:
-			self._write_interest[sock] = [ cb ]
-
 	def close_on_exit(self, sock):
 		self._close_list.append(sock)
 
@@ -38,18 +26,20 @@ class Looper(object):
 
 		while len(self._events) > 0:
 			next_event_time, next_event_cb = self._events[0]
-			if next_event_time > time.time(): break
+			if next_event_time > time.time():
+				break
 
 			next_event_cb()
 
 			del self._events[0]
 
-	def reload(self):
-		import chiral.inet.netcore as new_nc
-		reload(new_nc)
-		print "Reloading..."
-		self.__class__ = new_nc.SelectLooper
-		self._reloaded = True
+	def _run_once(self):
+		"""
+		Run one iteration of the main event handling loop.
+
+		This should be overridden in a derived class.
+		"""
+		raise NotImplementedError()
 
 	def run(self):
 		"""Run the main event processing loop."""
@@ -118,17 +108,19 @@ class SelectLooper(Looper):
 		self._write_interest = {}
 		self._exc_interest = {}
 
-	def wait_for_readable(self, sock, cb):
+	def wait_for_readable(self, sock, callback):
+		"""Register callback to be called next time sock is readable."""
 		if sock in self._read_interest:
-			self._read_interest[sock].append(cb)
+			self._read_interest[sock].append(callback)
 		else:
-			self._read_interest[sock] = [ cb ]
+			self._read_interest[sock] = [ callback ]
 
-	def wait_for_writeable(self, sock, cb):
+	def wait_for_writeable(self, sock, callback):
+		"""Register callback to be called next time sock is writeable."""
 		if sock in self._write_interest:
-			self._write_interest[sock].append(cb)
+			self._write_interest[sock].append(callback)
 		else:
-			self._write_interest[sock] = [ cb ]
+			self._write_interest[sock] = [ callback ]
 
 	def _run_once(self):
 		print "--- MAIN LOOP ---"
@@ -222,11 +214,13 @@ class EpollLooper(Looper):
 		self._sockets = {}
 
 	def wait_for_readable(self, sock, cb):
+		"""Register callback to be called next time sock is readable."""
 		assert sock.fileno() not in self._sockets
 		self._sockets[sock.fileno()] = sock, cb, epoll.EPOLLIN
 		ret = epoll.epoll_ctl(self.epoll_fd, epoll.EPOLL_CTL_ADD, sock.fileno(), epoll.EPOLLIN)
 
 	def wait_for_writeable(self, sock, cb):
+		"""Register callback to be called next time sock is writeable."""
 		assert sock.fileno() not in self._sockets
 		self._sockets[sock.fileno()] = sock, cb, epoll.EPOLLOUT
 		epoll.epoll_ctl(self.epoll_fd, epoll.EPOLL_CTL_ADD, sock.fileno(), epoll.EPOLLOUT)
