@@ -205,7 +205,7 @@ class WaitForTasklet(WaitCondition):
 
 		# If the tasklet has already finished, return its value now.
 		if self.tasklet.state in (Tasklet.STATE_COMPLETED, Tasklet.STATE_FAILED):
-			return self.tasklet.return_value, self.tasklet.exc_info
+			return self.tasklet.result
 
 		self._callback = tasklet.wait_condition_fired
 #		print "ARMING: %s after %s" % (tasklet, self.tasklet)
@@ -344,8 +344,6 @@ class Tasklet(object):
 
 	@ivar state: current execution state of the tasklet: one of the STATE_* contants.
 
-	@ivar return_value: the value returned by the tasklet function, or None.
-
 	@cvar STATE_RUNNING: the tasklet function is currently executing code
 	@cvar STATE_SUSPENDED: the tasklet function is currently waiting for an event
 	@cvar STATE_MSGSEND: the tasklet function is currently sending a message
@@ -357,9 +355,13 @@ class Tasklet(object):
 	state_names = "running", "suspended", "msgsend", "completed", "failed"
 
 	__slots__ = (
-		"_event", "_exception", "_completion_callbacks", "wait_condition",
-		"_message_queue", "_message_actions", "state", "return_value",
-		"exc_info", "gen", "_gen_name", "__weakref__"
+		"_completion_callbacks",
+		"wait_condition",
+		"_message_queue", "_message_actions",
+		"state",
+		"result",
+		"gen",
+		"_gen_name", "__weakref__"
 	)
 
 	def __init__(self, gen=None):
@@ -373,16 +375,12 @@ class Tasklet(object):
 
 		'''
 
-		self._event = None
-		self._exception = None
-
 		self._completion_callbacks = {}
 		self.wait_condition = None
 		self._message_queue = []
 		self._message_actions = {}
 		self.state = Tasklet.STATE_SUSPENDED
-		self.return_value = None
-		self.exc_info = None
+		self.result = None
 
 		_tasklets[id(self)] = self
 
@@ -398,7 +396,7 @@ class Tasklet(object):
 		stats.increment("chiral.core.tasklet.%s.instances" % self._gen_name)
 
 		# Start the generator
-		self._next_round()
+		self._next_round(None, None)
 
 	def get_message_actions(self):
 		"""Dictionary mapping message names to actions ('accept' or
@@ -423,7 +421,7 @@ class Tasklet(object):
 		)
 
 
-	def _next_round(self):
+	def _next_round(self, next_event, next_exception):
 		"""Wake up the Tasklet and run it as long as possible."""
 
 		assert self.state == Tasklet.STATE_SUSPENDED
@@ -434,20 +432,17 @@ class Tasklet(object):
 			# Run the tasklet once
 			self.state = Tasklet.STATE_RUNNING
 			try:
-				if self._exception:
-					gen_value = self.gen.throw(*self._exception)
-				elif self._event:
-					gen_value = self.gen.send(self._event)
+				if next_exception:
+					gen_value = self.gen.throw(*next_exception)
+				elif next_event:
+					gen_value = self.gen.send(next_event)
 				else:
 					gen_value = self.gen.next()
 
 			except StopIteration, ex:
 				# It completed successfully.
 				self.state = Tasklet.STATE_COMPLETED
-				if ex.args:
-					retval, = ex.args
-				else:
-					retval = None
+				retval = ex.args[0] if ex.args else None
 				self._completed(retval)
 				return
 			except: 
@@ -457,10 +452,8 @@ class Tasklet(object):
 				self.state = Tasklet.STATE_FAILED
 				self._completed(None, exc_info)
 				return
-			else:
-				self.state = Tasklet.STATE_SUSPENDED
-				assert gen_value is not None			
-				self._event = None
+
+			self.state = Tasklet.STATE_SUSPENDED
 
 			# If the generator yielded a Message, send it, then loop again.
 			if isinstance(gen_value, Message):
@@ -472,13 +465,11 @@ class Tasklet(object):
 				continue
 
 			# Make sure each yielded value is a WaitCondition
-			if isinstance(gen_value, WaitCondition):
-				pass
-			elif isinstance(gen_value, Tasklet):
+			if isinstance(gen_value, Tasklet):
 				gen_value = WaitForTasklet(gen_value)
 			elif isinstance(gen_value, types.GeneratorType):
 				gen_value = WaitForTasklet(Tasklet(gen_value))
-			else:
+			elif not isinstance(gen_value, WaitCondition):
 				raise TypeError(
 					"yielded values must be WaitConditions,"
 					" generators, or a single Message, not %s" % (repr(gen_value),)
@@ -489,7 +480,7 @@ class Tasklet(object):
 			if arm_result:
 				# If the WaitCondition was already ready, use its value
 				# and loop around.
-				self._event, self._exception = arm_result
+				next_event, next_exception = arm_result
 				continue
 			else:
 				stats.increment("chiral.core.tasklet.%s.waits" % self._gen_name)
@@ -516,6 +507,7 @@ class Tasklet(object):
 
 		## filter out messages with discard action
 		def _get_action(msg):
+			"""Retrieve the appropriate action for a message, warning if not found."""
 			try:
 				return self._message_actions[msg.name]
 			except KeyError:
@@ -523,14 +515,20 @@ class Tasklet(object):
 							  " directed to tasklet %s" % (msg, self))
 				return Message.DISCARD
 		if __debug__:
-			self._message_queue = [msg
-								   for msg in self._message_queue
-									   if _get_action(msg) != Message.DISCARD]
+			self._message_queue = [
+				msg
+				for msg
+				in self._message_queue
+				if _get_action(msg) != Message.DISCARD
+			]
 		else:
 			## slightly more efficient version of the above
-			self._message_queue = [msg for msg in self._message_queue
-				if (self._message_actions.getdefault(msg.name, Message.DISCARD)
-					!= Message.DISCARD)]
+			self._message_queue = [
+				msg
+				for msg
+				in self._message_queue
+				if (self._message_actions.get(msg.name, Message.DISCARD) != Message.DISCARD)
+			]
 
 		## find next ACCEPT-able message from queue, and pop it out
 		for idx, msg in enumerate(self._message_queue):
@@ -546,14 +544,8 @@ class Tasklet(object):
 #		traceback.print_stack(file=sys.stdout)
 
 		assert triggered_cond is self.wait_condition
-		assert self._event is None
 
-		self._event = return_value
-		self._exception = exc_info
-
-		self._next_round()
-		self._event = None
-		self._exception = None
+		self._next_round(return_value, exc_info)
 
 	def add_completion_callback(self, callback):
 		'''
@@ -573,13 +565,8 @@ class Tasklet(object):
 		so calling L{remove_callback_callback} afterwards produces a KeyError
 		exception.
 		'''
-
+		assert self.state not in (Tasklet.STATE_COMPLETED, Tasklet.STATE_FAILED)
 		#print "%s: new completion callback %s" % (self, callback)
-
-		if self.state == Tasklet.STATE_COMPLETED:
-			callback(self, self.return_value, None)
-		elif self.state == Tasklet.STATE_FAILED:
-			callback(self, None, self.exc_info)
 
 		handle = id(callback)
 		self._completion_callbacks[handle] = callback
@@ -589,26 +576,19 @@ class Tasklet(object):
 		'''Remove a completion callback previously added with L{add_completion_callback}'''
 		del self._completion_callbacks[handle]
 
-	def _completed(self, retval, exc_info=None):
-#		if exc_info:
-#			print "%s: Completed with exception: %s" % (self, exc_info)
-#		else:
-#			print "%s: Completed: %s" % (self, retval)
+	def _completed(self, return_value, return_exception=None):
 
 		if self.wait_condition:
 			self.wait_condition.disarm()
 		self.wait_condition = None
 
 		self.gen = None
-		self.return_value = retval
-		self.exc_info = exc_info
+		self.result = return_value, return_exception
 
 		callbacks = self._completion_callbacks.values()
 		self._completion_callbacks.clear()
 		for callback in callbacks:
-#			print "- calling: %s" % (callback, )
-			callback(self, retval, exc_info)
-
+			callback(self, return_value, return_exception)
 
 	def send_message(self, message):
 		"""Send a message to be received by the tasklet as an event.
@@ -619,13 +599,12 @@ class Tasklet(object):
 
 		"""
 		assert isinstance(message, Message)
-		assert self._event is None
 		if message.dest is None:
 			message.dest = self
 		self._message_queue.append(message)
-		self._event = self._dispatch_message()
-		if self._event is not None:
-			self._next_round()
+		next_event = self._dispatch_message()
+		if next_event is not None:
+			self._next_round(next_event, None)
 
 
 	def __repr__(self):
@@ -638,6 +617,6 @@ class Tasklet(object):
 			id(self),
 			self._gen_name,
 			self.state_names[self.state],
-			(", waiting on " + self.wait_condition) if self.wait_condition else "",
+			(", waiting on %s" % self.wait_condition) if self.wait_condition else "",
 			cc_list
 		)
