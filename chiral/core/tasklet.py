@@ -50,6 +50,7 @@ import warnings
 import weakref
 
 import sys
+import traceback
 
 from chiral.core import stats
 
@@ -417,8 +418,6 @@ class Tasklet(object):
 			# The try/except block below really is intended to catch /all/
 			# exceptions, so it can pass them on to the completion callback.
 			# Pylint normally warns on this, but it's acceptable in this case.
-			# pylint: disable-msg=W0702
-
 
 			# Run the tasklet once
 			self.state = Tasklet.STATE_RUNNING
@@ -437,7 +436,7 @@ class Tasklet(object):
 				retval = ex.args[0] if ex.args else None
 				self._completed(retval)
 				return
-			except: 
+			except Exception: 
 				# It died with an exception; save sys.exc_info here, then
 				# run any completion callbacks we have.
 				exc_info = sys.exc_info()
@@ -585,7 +584,10 @@ class Tasklet(object):
 			callback(self, return_value, return_exception)
 
 		if len(callbacks) == 0 and return_exception:
-			warnings.warn("Orphan tasklet %s failed with %s" % (self, return_exception))
+			exc_type, exc, exc_traceback = return_exception
+			warnings.warn("Orphan tasklet %s failed: %s" % (
+				self, ''.join(traceback.format_exception(exc_type, exc, exc_traceback))
+			))
 
 	def send_message(self, message):
 		"""Send a message to be received by the tasklet as an event.

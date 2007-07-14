@@ -6,8 +6,7 @@ import time
 import heapq
 import select
 import traceback
-import sys
-import gc
+import weakref
 
 class Looper(object):
 	"""
@@ -17,15 +16,14 @@ class Looper(object):
 	def __init__(self):
 		self._events = []
 
-		self._close_list = []
+		self._close_list = weakref.WeakValueDictionary()
 
 	def close_on_exit(self, sock):
-		self._close_list.append(sock)
+		"""Add sock to a list of sockets to be closed when the looper terminates."""
+		self._close_list[id(sock)] = sock
 
 	def _handle_scheduled_events(self):
-		"""
-		Handle any internally scheduled events.
-		"""
+		"""Handle any internally scheduled events."""
 
 		while len(self._events) > 0:
 			next_event_time, next_event_cb = self._events[0]
@@ -42,7 +40,7 @@ class Looper(object):
 
 		This should be overridden in a derived class.
 		"""
-		raise NotImplementedError()
+		raise NotImplementedError
 
 	def run(self):
 		"""Run the main event processing loop."""
@@ -51,12 +49,15 @@ class Looper(object):
 		# be replaced when the module is reloaded. Therefore, as
 		# little logic as possible should happen here.
 		while True:
+			stats.increment("chiral.inet.netcore.%s.loops" % self.__class__.__name__)
 			res = self._run_once()
 			if not res:
 				break
 
 		print "Done."
-		for sock in self._close_list:
+
+		close_list = list(self._close_list.itervalues())
+		for sock in close_list:
 			sock.close()
 			
 
@@ -97,125 +98,97 @@ class Looper(object):
 		else:
 			raise ValueError("must specify either callbacktime or delay")
 
-		callback = callbacks.Callback(source="Looper schedule: %d" % callbacktime)
+		callback = tasklet.WaitForCallback()
 
 		# Now the time is normalized; just add it to the queue.
 		heapq.heappush(self._events, (callbacktime, callback))
 
 		return callback
 
+	def time_to_next_event(self):
+		"""Return the time, in seconds, until the next scheduled event."""
+		if len(self._events) > 0:
+			next_event_time = self._events[0][0]
+			return max(next_event_time - time.time(), 0)
+		else:
+			return None
+
+
 class SelectLooper(Looper):
+	"""Looper using select()"""
+
 	def __init__(self):
 		Looper.__init__(self)
-
-		self._read_interest = {}
-		self._write_interest = {}
-		self._exc_interest = {}
+		self._read_sockets = {}
+		self._write_sockets = {}
 
 	def wait_for_readable(self, sock, callback):
 		"""Register callback to be called next time sock is readable."""
-		if sock in self._read_interest:
-			self._read_interest[sock].append(callback)
-		else:
-			self._read_interest[sock] = [ callback ]
+		assert sock not in self._read_sockets
+		self._read_sockets[sock] = callback
 
 	def wait_for_writeable(self, sock, callback):
 		"""Register callback to be called next time sock is writeable."""
-		if sock in self._write_interest:
-			self._write_interest[sock].append(callback)
-		else:
-			self._write_interest[sock] = [ callback ]
+		assert sock not in self._write_sockets
+		self._write_sockets[sock] = callback
 
 	def _run_once(self):
-		print "--- MAIN LOOP ---"
-		now = time.time()
-		delay = None
+		"""Run one iteration of the event handler."""
 
 		stats.increment("chiral.inet.netcore.select_calls")
 
-		gc.collect()
-		tasklet.dump()
+		delay = self.time_to_next_event()
 
-		if len(self._events) > 0:
-			next_event_time = self._events[0][0]
-			delay = next_event_time - now
-			if delay < 0:
-				delay = 0
-
-		print "Looper events:"
-		for sock, callbacks in list(self._read_interest.iteritems()) + \
-		list(self._write_interest.iteritems()):
-			print "fd %s: %s" % (sock.fileno(), callbacks)
-
-#		print "selecting on %d read, %d write, %d exception, %s timeout" % (
-#			len(self._read_interest),
-#			len(self._write_interest),
-#			len(self._exc_interest),
-#			delay
-#		)
-
-		if delay is None and len(self._read_interest) == 0 and \
-		   len(self._write_interest) == 0 and len(self._exc_interest) == 0:
+		if delay is None and len(self._read_sockets) == 0 and len(self._write_sockets) == 0:
 			return False
 
 		try:
-			rlist, wlist, xlist = select.select(
-				self._read_interest.keys(),
-				self._write_interest.keys(),
-				self._exc_interest.keys(),
+			rlist, wlist = select.select(
+				self._read_sockets.keys(),
+				self._write_sockets.keys(),
+				(),
 				delay
-			)
+			)[:2]
 		except KeyboardInterrupt:
 			# Just return.
 			return False
 
-#		print "select() returned: %d read, %d write, %d exception after %s seconds" % (
-#			len(rlist),
-#			len(wlist),
-#			len(xlist),
-#			time.time() - now
-#		)
 
-		def _handle_events(items, event_lists):
+		def _handle_events(items, event_list):
 			"""
-			Given a list of items, each of which is the key to a list of
-			callback functions in event_lists, call all callbacks registered
-			on each item.
-				"""
-			if not len(items):
-				return
-
+			For each item in items: call the callback in event_list whose
+			key is that item.
+			"""
 			for key in items:
-				event_list = list(event_lists[key])
-				del event_lists[key]
-				for callback in event_list:
-					try:
-						callback()
-					except Exception, exc:
-						print "Unhandled exception in TCP event: %s" % exc
-						traceback.print_exc() 
+				callback = event_list[key]
+				del event_list[key]
+
+				# Yes, we really do want to catch /all/ Exceptions
+				# pylint: disable-msg=W0703
+
+				try:
+					callback()
+				except Exception:
+					print "Unhandled exception in TCP event %s:" % (callback, )
+					traceback.print_exc() 
 
 
-		_handle_events(rlist, self._read_interest)
-		_handle_events(wlist, self._write_interest)
-		_handle_events(xlist, self._exc_interest)
+		_handle_events(rlist, self._read_sockets)
+		_handle_events(wlist, self._write_sockets)
 
 		self._handle_scheduled_events()
 
 		return True
 
 
-try:
-	import epoll
-	epoll_available = True
-except:
-	epoll_available = False
-
-
 class EpollLooper(Looper):
+	"""
+	Looper using epoll()
+	"""
 
 	def __init__(self, default_size = 10):
 		Looper.__init__(self)
+
 		self.epoll_fd = epoll.epoll_create(default_size)
 
 		self._sockets = {}
@@ -233,26 +206,14 @@ class EpollLooper(Looper):
 		epoll.epoll_ctl(self.epoll_fd, epoll.EPOLL_CTL_ADD, sock.fileno(), epoll.EPOLLOUT)
 
 	def _run_once(self):
-#		print "--- MAIN LOOP ---"
-		now = time.time()
-		delay = None
-#		gc.collect()
-#		tasklet.dump()
+		"""Run one iteration of the event handler."""
 
-		stats.increment("chiral.inet.netcore.epoll_calls")
+		delay = self.time_to_next_event()
 
-		if len(self._events) > 0:
-			next_event_time = self._events[0][0]
-			delay = (next_event_time - now) * 1000
-			if delay < 0:
-				delay = 0
-		else:
+		if delay is None:
 			delay = -1
-
-#		print "calling epoll_wait, timeout %s" % (delay, )
-#		print "Looper events:"
-#		for sock, cb, events in self._sockets.itervalues():
-#			print "fd %s: %s, events %s" % (sock.fileno(), cb, events)
+		else:
+			delay *= 1000
 
 		if delay == -1 and len(self._sockets) == 0:
 			return False
@@ -263,25 +224,28 @@ class EpollLooper(Looper):
 			# Just return.
 			return False
 
-#		print "epoll_wait() returned: %d events after %s seconds" % (
-#			len(events),
-#			time.time() - now
-#		)
-
 		for event_op, event_fd in events:
-			sock, callback = self._sockets[event_fd][:2]
+			sock, callback, desired_events = self._sockets[event_fd]
+			assert desired_events & event_op
 			del self._sockets[event_fd]
 
-#			print "epoll: handling event on fd %s, cb %s" % (sock.fileno(), cb)
 			epoll.epoll_ctl(self.epoll_fd, epoll.EPOLL_CTL_DEL, sock.fileno(), 0)
+
+			# Yes, we really do want to catch /all/ Exceptions
+			# pylint: disable-msg=W0703
 
 			try:
 				callback()
-			except:
-				print "Unhandled exception in TCP event: %s" % callback
-				traceback.print_exc(file=sys.stdout) 
-				sys.exit(1)
+			except Exception:
+				print "Unhandled exception in TCP event %s:" % (callback, )
+				traceback.print_exc() 
 
 		self._handle_scheduled_events()
 
 		return True
+
+# Attempt to import epoll. If it's not available, forget about EpollLooper.
+try:
+	import epoll
+except ImportError:
+	del EpollLooper
