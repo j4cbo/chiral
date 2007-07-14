@@ -21,6 +21,15 @@ class TCPConnection(object):
 	Provides basic interface for TCP connections.
 	"""
 
+	def handler(self):
+		"""
+		Main event processing loop.
+
+		The handler() method will be started as a Tasklet when the TCPConnection
+		is initialized. It should be overridden in the derived class.
+		"""
+		raise NotImplementedError
+
 	def handle_client_close(self):
 		"""
 		Connection.handle_client_close() will be called when the connection
@@ -173,6 +182,8 @@ class TCPConnection(object):
 		self.client_sock = sock
 		self.client_addr = addr
 		self._buffer = ""
+
+		tasklet.Tasklet(self.handler())
 
 class TCPServer(tasklet.Tasklet):
 	"""

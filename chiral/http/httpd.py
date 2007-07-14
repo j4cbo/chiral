@@ -1,11 +1,13 @@
-from chiral.core import tasklet
+"""
+Chiral HTTP server
+"""
+
 from chiral.inet import tcp
 
 import socket
-import traceback
-import sys
 
 class HTTPResponse(object):
+	"""Response to an HTTP request."""
 
 	codes = {
 		100: "Continue",
@@ -49,21 +51,31 @@ class HTTPResponse(object):
 		505: "HTTP Version Not Supported"
 	}
 
-	def __init__(self, conn, code=500, content_type="text/plain", headers = {}, content=None):
+	def __init__(self, conn, code=500, headers = None, content=None):
+		if headers is None:
+			headers = {}
+
 		self.conn = conn
 		self.headers = headers
 		self.content = content
 		self.code = code
 
-	def default_error(self, code):
+	def default_error(self, code, extra_content=''):
+		"""Sets the response to show a default error message."""
+
 		self.code = code
+		self.headers["Content-Type"] = "text/html"
+
 		code_string = "%s %s" % (code, HTTPResponse.codes[code])
-		self.content = "<html><head><title>%s</title></head><body><h1>%s</h1></body></html>" % (
+		self.content = "<html><head><title>%s</title></head><body><h1>%s</h1></body>%s</html>" % (
 			code_string,
-			code_string
+			code_string,
+			extra_content
 		)
 
 	def render_headers(self):
+		"""Return the response line and headers as a string."""
+
 		return "HTTP/1.1 %s %s\r\n%s\r\n\r\n" % (
 			self.code,
 			self.codes[self.code],
@@ -71,6 +83,8 @@ class HTTPResponse(object):
 		)
 
 	def write_out(self):
+		"""Write the complete response to its associated HTTPConnection."""
+
 		self.headers["Content-Length"] = len(self.content)
 		output = self.render_headers() + self.content
 		#print "--HTTP OUTPUT--\n%s\n----" % (output, )
@@ -80,6 +94,7 @@ class HTTPResponse(object):
 
 
 class HTTPRequest(object):
+	"""An incoming HTTP request."""
 
 	def __init__(self, lines):
 		self.request_line = lines[0].split(" ")
@@ -89,54 +104,49 @@ class HTTPRequest(object):
 
 		self.method, self.url, self.http_version = self.request_line
 
-		self.headers = dict(
+		self.__headers = dict(
 			(key.lower(), value.strip())
 			for key, value
 			in (line.split(":", 1) for line in lines[1:] if line)
 		)
 
+	def __get_headers(self):
+		"""Returns a dict of the request headers. All field names are lower-case."""
+		return self.__headers
+
+	headers = property(__get_headers)
+
+	def get_header(self, key, default=""):
+		"""Return the value of a given field (case-insensitive) in the request headers."""
+		return self.__headers.get(key.lower(), default)
+
+	def get_headers(self):
+		"""Returns a copy of the complete request headers."""
+		return dict(self.__headers)
+
 	def should_keep_alive(self):
-		if self.http_version == "HTTP/1.1" and "close" not in self.headers.get("connection", ""):
+		"""Return True if the request headers specify that it should be kept alive, False otherwise."""
+		if self.http_version == "HTTP/1.1" and "close" not in self.get_header("connection"):
 			return True
 
-		if self.http_version == "HTTP/1.0" and self.headers.get("connection", "").lower() == "keep-alive":
+		if self.http_version == "HTTP/1.0" and self.get_header("connection").lower() == "keep-alive":
 			return True
 
 		return False
 
 class HTTPConnection(tcp.TCPConnection):
+	"""An HTTP connection."""
 
 	MAX_REQUEST_LENGTH = 8192
 
 	def send_error(self, code, extra_content = ""):
-		resp = HTTPResponse(
-			conn = self,
-			code = code,
-			content = "<html><head><title>%s</title></head><body><h1>%s</h1>%s</body></html>" % (
-				HTTPResponse.codes[code],
-				HTTPResponse.codes[code],
-				extra_content
-			)
-		)
+		"""Create and send an HTTPResponse for the given status code."""
+		resp = HTTPResponse(conn = self)
+		resp.default_error(code, extra_content)
 		return resp.write_out()
 
-	def request_loop_done(self, tasklet, res, exc_info):
-		# If an error is thrown from request_loop, print it out and close
-		# the connection with a 500.
-		if not exc_info: return
-		#print "done with requests on fd %s" % (self.sock.socket.fileno(), )
-
-		error_string = "<p>%s</p><pre>%s</pre>" % (
-			exc_info[1],
-			"".join(traceback.format_exception(*exc_info))
-		)
-
-		print "AAAA!"
-		print "".join(traceback.format_exception(*exc_info))
-
-		#self.send_error(500, error_string).add_completion_callback(self.sock.close)
-
-	def request_loop(self):
+	def handler(self):
+		"""The main request processing loop."""
 
 		#print "request loop running"
 		while True:
@@ -152,7 +162,9 @@ class HTTPConnection(tcp.TCPConnection):
 				except (tcp.ConnectionClosedException, socket.error):
 					return
 
-				if not line: break
+				if not line:
+					break
+
 				req_lines.append(line)
 
 			# Set up request and response objects
@@ -181,11 +193,6 @@ class HTTPConnection(tcp.TCPConnection):
 				self.close()
 				return
 
-	def __init__(self, server, sock, client_addr):
-		tcp.TCPConnection.__init__(self, server, sock, client_addr)
-
-		#print "new HTTP connection!"
-		tasklet.Tasklet(self.request_loop())#.add_completion_callback(self.request_loop_done)
-
 class HTTPServer(tcp.TCPServer):
+	"""An HTTP server, based on chiral.inet.tcp.TCPServer."""
 	connection_class = HTTPConnection
