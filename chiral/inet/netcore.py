@@ -10,6 +10,9 @@ import sys
 import gc
 
 class Looper(object):
+	"""
+	Base class for Looper objects.
+	"""
 
 	def __init__(self):
 		self._events = []
@@ -49,11 +52,12 @@ class Looper(object):
 		# little logic as possible should happen here.
 		while True:
 			res = self._run_once()
-			if not res: break
+			if not res:
+				break
 
 		print "Done."
-		for s in self._close_list:
-			s.close()
+		for sock in self._close_list:
+			sock.close()
 			
 
 	def schedule(self, delay = None, callbacktime = None):
@@ -75,7 +79,7 @@ class Looper(object):
 
 			try:
 				callbacktime = now + float(delay)
-			except TypeError, e:
+			except TypeError:
 				raise TypeError("delay must be a number or timedelta")
 
 		elif callbacktime:
@@ -87,7 +91,7 @@ class Looper(object):
 			else:
 				try:
 					callbacktime = float(callbacktime)
-				except TypeError, e:
+				except TypeError:
 					raise TypeError("callbacktime must be a number or datetime")
 
 		else:
@@ -133,13 +137,15 @@ class SelectLooper(Looper):
 		tasklet.dump()
 
 		if len(self._events) > 0:
-			next_event_time, next_event_cb = self._events[0]
+			next_event_time = self._events[0][0]
 			delay = next_event_time - now
-			if delay < 0: delay = 0
+			if delay < 0:
+				delay = 0
 
 		print "Looper events:"
-		for s, cbs in list(self._read_interest.iteritems()) + list(self._write_interest.iteritems()):
-			print "fd %s: %s" % (s.fileno(), cbs)
+		for sock, callbacks in list(self._read_interest.iteritems()) + \
+		list(self._write_interest.iteritems()):
+			print "fd %s: %s" % (sock.fileno(), callbacks)
 
 #		print "selecting on %d read, %d write, %d exception, %s timeout" % (
 #			len(self._read_interest),
@@ -176,16 +182,17 @@ class SelectLooper(Looper):
 			callback functions in event_lists, call all callbacks registered
 			on each item.
 				"""
-			if not len(items): return
+			if not len(items):
+				return
 
 			for key in items:
 				event_list = list(event_lists[key])
 				del event_lists[key]
-				for e in event_list:
+				for callback in event_list:
 					try:
-						e()
-					except:
-						print "Unhandled exception in TCP event: %s" % e
+						callback()
+					except Exception, exc:
+						print "Unhandled exception in TCP event: %s" % exc
 						traceback.print_exc() 
 
 
@@ -213,16 +220,16 @@ class EpollLooper(Looper):
 
 		self._sockets = {}
 
-	def wait_for_readable(self, sock, cb):
+	def wait_for_readable(self, sock, callback):
 		"""Register callback to be called next time sock is readable."""
 		assert sock.fileno() not in self._sockets
-		self._sockets[sock.fileno()] = sock, cb, epoll.EPOLLIN
-		ret = epoll.epoll_ctl(self.epoll_fd, epoll.EPOLL_CTL_ADD, sock.fileno(), epoll.EPOLLIN)
+		self._sockets[sock.fileno()] = sock, callback, epoll.EPOLLIN
+		epoll.epoll_ctl(self.epoll_fd, epoll.EPOLL_CTL_ADD, sock.fileno(), epoll.EPOLLIN)
 
-	def wait_for_writeable(self, sock, cb):
+	def wait_for_writeable(self, sock, callback):
 		"""Register callback to be called next time sock is writeable."""
 		assert sock.fileno() not in self._sockets
-		self._sockets[sock.fileno()] = sock, cb, epoll.EPOLLOUT
+		self._sockets[sock.fileno()] = sock, callback, epoll.EPOLLOUT
 		epoll.epoll_ctl(self.epoll_fd, epoll.EPOLL_CTL_ADD, sock.fileno(), epoll.EPOLLOUT)
 
 	def _run_once(self):
@@ -235,9 +242,10 @@ class EpollLooper(Looper):
 		stats.increment("chiral.inet.netcore.epoll_calls")
 
 		if len(self._events) > 0:
-			next_event_time, next_event_cb = self._events[0]
+			next_event_time = self._events[0][0]
 			delay = (next_event_time - now) * 1000
-			if delay < 0: delay = 0
+			if delay < 0:
+				delay = 0
 		else:
 			delay = -1
 
@@ -260,17 +268,17 @@ class EpollLooper(Looper):
 #			time.time() - now
 #		)
 
-		for epop, fd in events:
-			sock, cb, desired_epop = self._sockets[fd]
-			del self._sockets[fd]
+		for event_op, event_fd in events:
+			sock, callback = self._sockets[event_fd][:2]
+			del self._sockets[event_fd]
 
 #			print "epoll: handling event on fd %s, cb %s" % (sock.fileno(), cb)
 			epoll.epoll_ctl(self.epoll_fd, epoll.EPOLL_CTL_DEL, sock.fileno(), 0)
 
 			try:
-				cb()
+				callback()
 			except:
-				print "Unhandled exception in TCP event: %s" % cb
+				print "Unhandled exception in TCP event: %s" % callback
 				traceback.print_exc(file=sys.stdout) 
 				sys.exit(1)
 

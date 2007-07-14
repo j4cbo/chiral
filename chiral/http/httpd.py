@@ -179,11 +179,9 @@ class HTTPConnection(tcp.TCPConnection):
 				self.close()
 				return
 
-	def __init__(self, server, sock, addr):
-		self.server = server
-		server.connections.append(self)
-		self.sock = sock
-		self.client_addr = addr
+	def __init__(self, server, sock, client_addr):
+		tcp.TCPConnection.__init__(self, server, sock, client_addr)
+
 		#print "new HTTP connection!"
 		tasklet.Tasklet(self.request_loop())#.add_completion_callback(self.request_loop_done)
 

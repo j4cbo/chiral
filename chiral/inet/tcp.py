@@ -1,3 +1,5 @@
+"""TCP connection handling classes."""
+
 from chiral.inet import netcore
 from chiral.core import tasklet
 import traceback
@@ -9,12 +11,17 @@ if sys.version_info[:2] < (2, 5):
 	raise RuntimeError("chiral.inet.tcp requires Python 2.5 for generator expressions.")
 
 class ConnectionOverflowException(Exception):
+	"""Indicates that an excessive amount of data was received without line terminators."""
 	pass
 
 class ConnectionClosedException(Exception):
+	"""Indicates that the connection was closed."""
 	pass
 
 class TCPConnection(object):
+	"""
+	Provides basic interface for TCP connections.
+	"""
 
 	def handle_client_close(self):
 		"""
@@ -60,6 +67,7 @@ class TCPConnection(object):
 		"""
 
 		def _read_line_tasklet():
+			"""Helper tasklet created by read_line if data is not immediately available."""
 			while True:
 				# Read more data
 				new_data = yield self.sock.recv(max_len)
@@ -71,14 +79,11 @@ class TCPConnection(object):
 				if delimiter in self._buffer[:max_len]:
 					out, self._buffer = self._buffer.split(delimiter, 1)
 					raise StopIteration(out)
-					return
 
 				# If not, and the buffer's longer than our expected line,
 				# we've had an overflow
 				if len(self._buffer) > max_len:
 					raise ConnectionOverflowException()
-
-		if not hasattr(self, "_buffer"): self._buffer = ""
 
 		# Check if the delimiter is already in the buffer.
 		if delimiter in self._buffer[:max_len]:
@@ -98,8 +103,6 @@ class TCPConnection(object):
 		octets at a time.
 		"""
 
-		if not hasattr(self, "_buffer"): self._buffer = ""
-
 		while True:
 			# If we have enough bytes, return them
 			if len(self._buffer) >= length:
@@ -115,6 +118,14 @@ class TCPConnection(object):
 				raise ConnectionClosedException()
 
 			self._buffer += new_data
+
+	def __init__(self, server, sock, client_addr):
+		self.server = server
+		server.connections.append(self)
+		self.sock = sock
+		self.client_addr = client_addr
+
+		self._buffer = ""
 
 class TCPServer(object):
 	"""
@@ -146,10 +157,14 @@ class TCPServer(object):
 	def acceptor(self):
 
 		# Continuously accept new connections
-		while True:
-			nc_socket, nc_addr = yield self.master_socket.accept()
+		try:
+			while True:
+				nc_socket, nc_addr = yield self.master_socket.accept()
 #			print "Accepting connection: %s from %s" % (nc_socket, nc_addr)
-			nc = self.connection_class(self, nc_socket, nc_addr)
+				nc = self.connection_class(self, nc_socket, nc_addr)
+		except:
+			traceback.print_exc()
+			return
 
 
 class AsyncSocket(object):
@@ -168,25 +183,29 @@ class AsyncSocket(object):
 
 		self.socket.setblocking(0)
 
-	def _async_socket_operation(self, op, cb_func, *args, **kwargs):
+	def _async_socket_operation(self, operation, cb_func, *args, **kwargs):
+		"""
+		Helper function for asynchronous operations.
+		"""
+
 		try:
-			res = op(*args, **kwargs)
-		except socket.error, e:
-			if e[0] == errno.EAGAIN:
-				cb = tasklet.WaitForCallback()
+			res = operation(*args, **kwargs)
+		except socket.error, exc:
+			if exc[0] == errno.EAGAIN:
+				callback = tasklet.WaitForCallback()
 
 				def blocked_operation_handler():
 					try:
-						res = op(*args, **kwargs)
-					except Exception, e:
-						cb.throw(e)
+						res = operation(*args, **kwargs)
+					except Exception, exc:
+						callback.throw(exc)
 					else:
-						cb(res)
+						callback(res)
 
 				cb_func(self.socket, blocked_operation_handler)
-				return cb
+				return callback
 			else:
-				cb.throw(e)
+				callback.throw(exc)
 
 		return tasklet.WaitForNothing(res)
 
@@ -237,34 +256,41 @@ class AsyncSocket(object):
 		try:
 			res, addr = self.socket.accept()
 			res = (AsyncSocket(looper = self.looper, _sock = res), addr)
-		except socket.error, e:
-			if e[0] == errno.EAGAIN:
-				cb = tasklet.WaitForCallback()
+		except socket.error, exc:
+			if exc[0] == errno.EAGAIN:
+				callback = tasklet.WaitForCallback()
 
 				def blocked_accept_handler():
 					try:
 						res, addr = self.socket.accept()
-					except Exception, e:
-						cb.throw(e)
+					except Exception, exc:
+						callback.throw(exc)
 					else:
 						res = (AsyncSocket(looper = self.looper, _sock = res), addr)
-						cb(res)
+						callback(res)
 
 				self.looper.wait_for_readable(self.socket, blocked_accept_handler)
-				return cb
+				return callback
 			else:
-				cb.throw(e)
+				callback.throw(exc)
 
 		return tasklet.WaitForNothing(res)
 
 
-	def bind(self, *args, **kwargs): return self.socket.bind(*args, **kwargs)
-	def listen(self, *args, **kwargs): return self.socket.listen(*args, **kwargs)
-	def setsockopt(self, *args, **kwargs): return self.socket.setsockopt(*args, **kwargs)
-	def getsockopt(self, *args, **kwargs): return self.socket.getsockopt(*args, **kwargs)
+	def bind(self, *args, **kwargs):
+		return self.socket.bind(*args, **kwargs)
+
+	def listen(self, *args, **kwargs):
+		return self.socket.listen(*args, **kwargs)
+
+	def setsockopt(self, *args, **kwargs):
+		return self.socket.setsockopt(*args, **kwargs)
+
+	def getsockopt(self, *args, **kwargs):
+		return self.socket.getsockopt(*args, **kwargs)
+
 	def close(self):
-		cr = self.socket.close()
-		return cr
+		return self.socket.close()
 
 	def __del__(self):
 		self.socket.close()

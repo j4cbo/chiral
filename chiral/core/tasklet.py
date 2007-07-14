@@ -56,20 +56,23 @@ from chiral.core import stats
 if sys.version_info[:2] < (2, 5):
 	raise RuntimeError("chiral.core.callbacks requires Python 2.5 for generator expressions.")
 
-class task(object):
-	'''
-	A decorator that modifies a tasklet function to avoid the need
-	to call C{tasklet.Tasklet(func())}.
-	'''
+# Some of the classes here are very simple (Message, etc).
+# but for good reason. Suppress pylint's warning about insufficient public methods.
+# pylint: disable-msg=R0903
 
-	def __init__(self, func):
-		self._func = func
-		self.__name__ = func.__name__
-		self.__doc__ = func.__doc__
+def task(gen):
+	"""
+	Decorator function to create a new Tasklet with each call to the wrapped function.
+	"""
 
-	def __call__(self, *args, **kwargs):
-		return Tasklet(self._func(*args, **kwargs))
+	# Yes, we really do want to perform magic with kwargs and __doc__, etc.
+	# pylint: disable-msg=W0142,W0621
+	new_tasklet = lambda *args, **kwargs: Tasklet(gen(*args, **kwargs))
 
+	new_tasklet.__name__ = gen.__name__
+	new_tasklet.__doc__ = gen.__doc__
+
+	return new_tasklet
 
 class WaitCondition(object):
 	'''
@@ -170,7 +173,7 @@ class WaitForNothing(WaitCondition):
 		WaitCondition.__init__(self)
 		self.value = value
 
-	def arm(self, tasklet):
+	def arm(self, tasklet): # pylint: disable-msg=W0613
 		'''Overrides WaitCondition.arm'''
 		return (self.value, None)
 
@@ -220,6 +223,7 @@ class WaitForTasklet(WaitCondition):
 			self._id = None
 
 	def _completion_cb(self, tasklet, retval, exc_info):
+		'''Used as the completion callback when the other tasklet returns.'''
 		assert tasklet is self.tasklet
 
 		self._id = None
@@ -232,7 +236,6 @@ class WaitForTasklet(WaitCondition):
 
 	def __repr__(self):
 		return "<WaitForTasklet: for %s>" % self.tasklet
-
 
 class Message(object):
 	'''A message that can be received by or sent to a tasklet.'''
@@ -326,15 +329,15 @@ class WaitForMessages(WaitCondition):
 # ensures that even if this module is reloaded, only one list of
 # tasklets will ever exist.
 try:
-	_tasklets # pylint: disable-msg=W0104
+	_TASKLETS # pylint: disable-msg=W0104
 except NameError:
-	_tasklets = weakref.WeakValueDictionary()
+	_TASKLETS = weakref.WeakValueDictionary()
 
 def dump():
 	"""Print a list (to stdout) of all currently known Tasklet instances and their state."""
 	print ""
 	print "Tasklets:"
-	for tasklet in _tasklets.values():
+	for tasklet in _TASKLETS.values():
 		print repr(tasklet)
 	print ""
 
@@ -364,7 +367,7 @@ class Tasklet(object):
 		"_gen_name", "__weakref__"
 	)
 
-	def __init__(self, gen=None):
+	def __init__(self, gen):
 		'''
 		Launch a generator tasklet.
 
@@ -382,14 +385,11 @@ class Tasklet(object):
 		self.state = Tasklet.STATE_SUSPENDED
 		self.result = None
 
-		_tasklets[id(self)] = self
+		_TASKLETS[id(self)] = self
 
-		if gen is None:
-			self.gen = self.run()
-		else:
-			assert isinstance(gen, types.GeneratorType)
-			self.gen = gen
+		assert isinstance(gen, types.GeneratorType)
 
+		self.gen = gen
 		self._gen_name = self.gen.gi_frame.f_code.co_name
 
 		stats.increment("chiral.core.tasklet.Tasklet.tasklets_started")
@@ -397,6 +397,12 @@ class Tasklet(object):
 
 		# Start the generator
 		self._next_round(None, None)
+
+		# If the generator failed during its first round, pass the exception on up
+		# to the code that instantiated this tasklet.
+		if self.state == Tasklet.STATE_FAILED:
+			exc_type, exc, exc_traceback = self.result[1]
+			raise exc_type, exc, exc_traceback
 
 	def get_message_actions(self):
 		"""Dictionary mapping message names to actions ('accept' or
@@ -407,20 +413,6 @@ class Tasklet(object):
 
 	message_actions = property(get_message_actions)
 
-	def run(self):
-		"""
-		Method that executes the task.
-
-		Should be overridden in a subclass if no generator is passed
-		into the constructor.
-		"""
-
-		raise ValueError(
-			"run() should be overridden in a subclass if"
-			" no generator is passed into the constructor."
-		)
-
-
 	def _next_round(self, next_event, next_exception):
 		"""Wake up the Tasklet and run it as long as possible."""
 
@@ -428,12 +420,18 @@ class Tasklet(object):
 
 		# Loop as long as possible.
 		while True:
+			# The try/except block below really is intended to catch /all/
+			# exceptions, so it can pass them on to the completion callback.
+			# Pylint normally warns on this, but it's acceptable in this case.
+			# pylint: disable-msg=W0702
+
 
 			# Run the tasklet once
 			self.state = Tasklet.STATE_RUNNING
 			try:
 				if next_exception:
-					gen_value = self.gen.throw(*next_exception)
+					exc_type, exc, exc_tb = next_exception
+					gen_value = self.gen.throw(exc_type, exc, exc_tb)
 				elif next_event:
 					gen_value = self.gen.send(next_event)
 				else:
@@ -452,6 +450,9 @@ class Tasklet(object):
 				self.state = Tasklet.STATE_FAILED
 				self._completed(None, exc_info)
 				return
+
+			# OK, the generator has yielded a new value; now figure out what
+			# to do with it.
 
 			self.state = Tasklet.STATE_SUSPENDED
 
@@ -474,7 +475,6 @@ class Tasklet(object):
 					"yielded values must be WaitConditions,"
 					" generators, or a single Message, not %s" % (repr(gen_value),)
 				)
-
 
 			arm_result = gen_value.arm(self)
 			if arm_result:
@@ -533,10 +533,9 @@ class Tasklet(object):
 		## find next ACCEPT-able message from queue, and pop it out
 		for idx, msg in enumerate(self._message_queue):
 			if self._message_actions[msg.name] == Message.ACCEPT:
-				break
+				return self._message_queue.pop(idx)
 		else:
 			return None
-		return self._message_queue.pop(idx)
 
 
 	def wait_condition_fired(self, triggered_cond, return_value, exc_info = None):
@@ -577,6 +576,7 @@ class Tasklet(object):
 		del self._completion_callbacks[handle]
 
 	def _completed(self, return_value, return_exception=None):
+		"""Called by _next_round when the tasklet has been completed."""
 
 		if self.wait_condition:
 			self.wait_condition.disarm()
