@@ -25,12 +25,31 @@
 # Author(s): Gustavo J. A. M. Carneiro <gjc@inescporto.pt>
 #
 
+"""The core coroutine system.
+
+Concurrency in Chiral is based on "tasklets", a simple implementation of coroutines. This
+implementation is based on that of the Kiwi framework, but heavily modified to not depend on GTK
+and to make full use of the enhanced genertor features of Python 2.5.
+
+Every Tasklet is implemented as a generator. Generators are defined like functions, but when
+called, they instead produce an iterator-like object that maintains the internal state of the
+function. Calling next() on a generator runs the generator function until a C{yield} isi
+encountered; the state of the function is then frozen. Importantly, as of Python 2.5, C{yield}
+is an expression, allowing new information to be passed into the generator with its send() method.
+
+As such, Tasklets add one requirement to generators: they may only yield WaitCondition objects.
+(As a shortcut, a Tasklet may also yield another Tasklet, or a generator object; this is
+equivalent to yielding a WaitForTasklet on the given tasklet or on a new Tasklet based on the
+generator. When the WaitCondition becomes ready, the Tasklet is resumed, and the value it returned
+(if any) is passed as the return value of the C{yield} expression.
+
+"""
+
 import types
 import warnings
 import weakref
 
 import sys
-import traceback
 
 from chiral.core import stats
 
@@ -56,7 +75,7 @@ class WaitCondition(object):
 	'''
 	Base class for all wait-able condition objects.
 
-	WaitConditions are yielded from within the body of a tasklet, to specify what event(s) it
+	WaitConditions are yielded from within the body of a tasklet, to specify what it
 	should wait for in order to receive control again.
 	'''
 
@@ -118,11 +137,12 @@ class WaitForCallback(WaitCondition):
 		self._callback = None
 
 	def __call__(self, return_value=None):
-
+		"""Resume the Tasklet, passing return_value as the result of the WaitCondition."""
 		retval = self._callback(self, return_value)
 		return retval
 
 	def throw(self, exc=None):
+		"""Cause an Exception to be raised within the Tasklet."""
 		if not exc:
 			exc = sys.exc_info()
 		elif isinstance(exc, Exception):
@@ -178,6 +198,7 @@ class WaitForTasklet(WaitCondition):
 		WaitCondition.__init__(self)
 		self.tasklet = tasklet
 		self._id = None
+		self._callback = None
 
 	def arm(self, tasklet):
 		'''See L{WaitCondition.arm}'''
@@ -305,15 +326,16 @@ class WaitForMessages(WaitCondition):
 # ensures that even if this module is reloaded, only one list of
 # tasklets will ever exist.
 try:
-	tasklets
+	_tasklets # pylint: disable-msg=W0104
 except NameError:
-	tasklets = weakref.WeakValueDictionary()
+	_tasklets = weakref.WeakValueDictionary()
 
 def dump():
+	"""Print a list (to stdout) of all currently known Tasklet instances and their state."""
 	print ""
 	print "Tasklets:"
-	for t in tasklets.values():
-		print "%s (rc %d)" % (t, sys.getrefcount(t))
+	for tasklet in _tasklets.values():
+		print repr(tasklet)
 	print ""
 
 class Tasklet(object):
@@ -334,7 +356,11 @@ class Tasklet(object):
 
 	state_names = "running", "suspended", "msgsend", "completed", "failed"
 
-	__slots__ = "_event", "_exception", "_completion_callbacks", "wait_condition", "_message_queue", "_message_actions", "state", "return_value", "exc_info", "gen", "_gen_name", "__weakref__"
+	__slots__ = (
+		"_event", "_exception", "_completion_callbacks", "wait_condition",
+		"_message_queue", "_message_actions", "state", "return_value",
+		"exc_info", "gen", "_gen_name", "__weakref__"
+	)
 
 	def __init__(self, gen=None):
 		'''
@@ -358,7 +384,7 @@ class Tasklet(object):
 		self.return_value = None
 		self.exc_info = None
 
-		tasklets[id(self)] = self
+		_tasklets[id(self)] = self
 
 		if gen is None:
 			self.gen = self.run()
@@ -396,49 +422,45 @@ class Tasklet(object):
 			" no generator is passed into the constructor."
 		)
 
-	def _invoke(self):
-		self.state = Tasklet.STATE_RUNNING
-#		dump()
-		try:
-			if self._exception:
-#				print "throwing: %s" % (self._exception, )
-				gen_value = self.gen.throw(*self._exception)
-			if self._event:
-				gen_value = self.gen.send(self._event)
-			else:
-				gen_value = self.gen.next()
-
-		except StopIteration, ex:
-			#print "%s: got StopIteration; zombifying." % (self, )
-			self.state = Tasklet.STATE_COMPLETED
-			if ex.args:
-				retval, = ex.args
-			else:
-				retval = None
-			self._completed(retval)
-			return None
-		except:
-			exc_info = sys.exc_info()
-#			print "%s: got exception %s: %s; zombifying." % (self, exc_info[0], exc_info[1])
-#			print traceback.format_exc()
-			self.state = Tasklet.STATE_FAILED
-			self._completed(None, sys.exc_info())
-			return None
-		else:
-			self.state = Tasklet.STATE_SUSPENDED
-			assert gen_value is not None			
-
-		self._event = None
-		return gen_value
 
 	def _next_round(self):
+		"""Wake up the Tasklet and run it as long as possible."""
+
 		assert self.state == Tasklet.STATE_SUSPENDED
 
+		# Loop as long as possible.
 		while True:
-			# Loop as long as possible.
-			gen_value = self._invoke()
-			if gen_value is None:
+
+			# Run the tasklet once
+			self.state = Tasklet.STATE_RUNNING
+			try:
+				if self._exception:
+					gen_value = self.gen.throw(*self._exception)
+				elif self._event:
+					gen_value = self.gen.send(self._event)
+				else:
+					gen_value = self.gen.next()
+
+			except StopIteration, ex:
+				# It completed successfully.
+				self.state = Tasklet.STATE_COMPLETED
+				if ex.args:
+					retval, = ex.args
+				else:
+					retval = None
+				self._completed(retval)
 				return
+			except: 
+				# It died with an exception; save sys.exc_info here, then
+				# run any completion callbacks we have.
+				exc_info = sys.exc_info()
+				self.state = Tasklet.STATE_FAILED
+				self._completed(None, exc_info)
+				return
+			else:
+				self.state = Tasklet.STATE_SUSPENDED
+				assert gen_value is not None			
+				self._event = None
 
 			# If the generator yielded a Message, send it, then loop again.
 			if isinstance(gen_value, Message):
@@ -607,18 +629,15 @@ class Tasklet(object):
 
 
 	def __repr__(self):
-		if self.wait_condition:
-			wl = ", waiting on " + repr(self.wait_condition)
-		else:
-			wl = ""
 
-		cl = ", ".join(str(type(i)) for i in self._completion_callbacks.values())
-		if cl: cl = ", completion callbacks " + cl
+		cc_list = ", ".join(str(type(i)) for i in self._completion_callbacks.values())
+		if cc_list:
+			cc_list = ", completion callbacks " + cc_list
 			
 		return "<Tasklet: id %s, \"%s\", %s%s%s>" % (
 			id(self),
 			self._gen_name,
 			self.state_names[self.state],
-			wl,
-			cl
+			(", waiting on " + self.wait_condition) if self.wait_condition else "",
+			cc_list
 		)
