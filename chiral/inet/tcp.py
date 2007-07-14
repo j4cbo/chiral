@@ -1,8 +1,6 @@
 """TCP connection handling classes."""
 
-from chiral.inet import netcore
 from chiral.core import tasklet
-import traceback
 import sys
 import socket
 import errno
@@ -43,7 +41,7 @@ class TCPConnection(object):
 		"""
 
 		self.handle_server_close()
-		self.sock.close()
+		self.client_sock.close()
 		self.server.connections.remove(self)
 
 	def client_closed(self):
@@ -55,7 +53,7 @@ class TCPConnection(object):
 		the connection.
 		"""
 		self.handle_client_close()
-		self.sock.close()
+		self.client_sock.close()
 		self.server.connections.remove(self)
 
 
@@ -70,7 +68,7 @@ class TCPConnection(object):
 			"""Helper tasklet created by read_line if data is not immediately available."""
 			while True:
 				# Read more data
-				new_data = yield self.sock.recv(max_len)
+				new_data = yield self.recv(max_len)
 				if not new_data:
 					raise ConnectionClosedException()
 
@@ -113,24 +111,73 @@ class TCPConnection(object):
 
 			# Otherwise, read more
 			bytes_left = length - len(self._buffer)
-			new_data = yield self.sock.recv(min(bytes_left, read_increment))
+			new_data = yield self.recv(min(bytes_left, read_increment))
 			if not new_data:
 				raise ConnectionClosedException()
 
 			self._buffer += new_data
 
-	def __init__(self, server, sock, client_addr):
-		self.server = server
-		server.connections.append(self)
-		self.sock = sock
-		self.client_addr = client_addr
+	def _async_socket_operation(self, socket_op, cb_func, parameter):
+		"""Helper function for asynchronous operations."""
 
+		try:
+			res = socket_op(parameter)
+		except socket.error, exc:
+			if exc[0] == errno.EAGAIN:
+				callback = tasklet.WaitForCallback()
+
+				def blocked_operation_handler():
+					"""Callback for asynchronous operations."""
+					# Prevent pylint from complaining about "except Exception"
+					# pylint: disable-msg=W0703
+					try:
+						res = socket_op(parameter)
+					except Exception, exc:
+						callback.throw(exc)
+					else:
+						callback(res)
+
+				cb_func(self.client_sock, blocked_operation_handler)
+				return callback
+			else:
+				callback.throw(exc)
+
+		return tasklet.WaitForNothing(res)
+
+	def recv(self, buflen):
+		"""
+		Read data from the socket. Returns a Callback, which will
+		fire as soon as data is available.
+		"""
+		return self._async_socket_operation(
+			self.client_sock.recv,
+			self.server.looper.wait_for_readable,
+			buflen
+		)
+
+	def send(self, data):
+		"""
+		Send data. Returns a Callback, which fires once the data has been sent.
+		"""
+
+		return self._async_socket_operation(
+			self.client_sock.send,
+			self.server.looper.wait_for_writeable,
+			data
+		)
+
+	def __init__(self, server, sock, addr):
+		self.server = server
+		self.server.connections.append(self)
+
+		self.client_sock = sock
+		self.client_addr = addr
 		self._buffer = ""
 
-class TCPServer(object):
+class TCPServer(tasklet.Tasklet):
 	"""
 	This is a general-purpose TCP server. It manages one master
-	AsyncSocket which listens on a TCP port and accepts connections;
+	socket which listens on a TCP port and accepts connections;
 	each connection is tracked and closed when necessary.
 
 	The connection_class attribute sets the class that will be created for
@@ -147,150 +194,36 @@ class TCPServer(object):
 		self.bind_addr = bind_addr
 
 
-		self.master_socket = AsyncSocket(self.looper)
+		self.master_socket = socket.socket()
+		self.master_socket.setblocking(0)
 		self.master_socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
 		self.master_socket.bind(self.bind_addr)
 		self.master_socket.listen(5)
 
-		tasklet.Tasklet(self.acceptor())
+		tasklet.Tasklet.__init__(self, self.acceptor())
 
 	def acceptor(self):
+		"""Main tasklet function.
+
+		Continously calls accept() and creates new connection objects.
+		"""
 
 		# Continuously accept new connections
-		try:
+		while True:
+
+			# Keep trying to accept() until we get a socket
 			while True:
-				nc_socket, nc_addr = yield self.master_socket.accept()
-#			print "Accepting connection: %s from %s" % (nc_socket, nc_addr)
-				nc = self.connection_class(self, nc_socket, nc_addr)
-		except:
-			traceback.print_exc()
-			return
+				try:
+					client_socket, client_addr = self.master_socket.accept()
+				except socket.error, exc:
+					if exc[0] != errno.EAGAIN:
+						print "Error in accept(): %s" % exc
 
+					callback = tasklet.WaitForCallback()
+					self.looper.wait_for_readable(self.master_socket, callback)
+					yield callback
+				else:
+					break
 
-class AsyncSocket(object):
-	"""
-	Asynchronous version of Socket. All potentially blocking operations
-	(recv, recvfrom, send, sendto, accept) return Callback objects that
-	fire once the operation is complete.
-	"""
-
-	def __init__(self, looper, _sock=None, **kwargs):
-		self.looper = looper
-		if _sock:
-			self.socket = _sock
-		else:
-			self.socket = socket.socket(**kwargs)
-
-		self.socket.setblocking(0)
-
-	def _async_socket_operation(self, operation, cb_func, *args, **kwargs):
-		"""
-		Helper function for asynchronous operations.
-		"""
-
-		try:
-			res = operation(*args, **kwargs)
-		except socket.error, exc:
-			if exc[0] == errno.EAGAIN:
-				callback = tasklet.WaitForCallback()
-
-				def blocked_operation_handler():
-					try:
-						res = operation(*args, **kwargs)
-					except Exception, exc:
-						callback.throw(exc)
-					else:
-						callback(res)
-
-				cb_func(self.socket, blocked_operation_handler)
-				return callback
-			else:
-				callback.throw(exc)
-
-		return tasklet.WaitForNothing(res)
-
-	def recv(self, buflen):
-		"""
-		Read data from the socket. Returns a Callback, which will
-		fire as soon as data is available.
-		"""
-		return self._async_socket_operation(
-			self.socket.recv,
-			self.looper.wait_for_readable,
-			buflen
-		)
-
-
-	def recvfrom(self, buflen):
-		"""
-		Read data and source address from the socket. Returns a Callback,
-		which will fire as soon as data is available.
-		"""
-
-		return self._async_socket_operation(
-			self.socket.recvfrom,
-			self.looper.wait_for_readable,
-			buflen
-		)
-
-
-	def send(self, data):
-		"""
-		Send data. Returns a Callback, which fires once the data has been sent.
-		"""
-
-		return self._async_socket_operation(
-			self.socket.send,
-			self.looper.wait_for_writeable,
-			data
-		)
-
-	def accept(self):
-		"""
-		Return a callback which fires when a new connection has been accepted.
-		"""
-
-		# This call goes directly to the internal _sock object,
-		# allowing us to ensure that the returned value is an
-		# AsyncSocket rather than the original socket.socket class.
-		try:
-			res, addr = self.socket.accept()
-			res = (AsyncSocket(looper = self.looper, _sock = res), addr)
-		except socket.error, exc:
-			if exc[0] == errno.EAGAIN:
-				callback = tasklet.WaitForCallback()
-
-				def blocked_accept_handler():
-					try:
-						res, addr = self.socket.accept()
-					except Exception, exc:
-						callback.throw(exc)
-					else:
-						res = (AsyncSocket(looper = self.looper, _sock = res), addr)
-						callback(res)
-
-				self.looper.wait_for_readable(self.socket, blocked_accept_handler)
-				return callback
-			else:
-				callback.throw(exc)
-
-		return tasklet.WaitForNothing(res)
-
-
-	def bind(self, *args, **kwargs):
-		return self.socket.bind(*args, **kwargs)
-
-	def listen(self, *args, **kwargs):
-		return self.socket.listen(*args, **kwargs)
-
-	def setsockopt(self, *args, **kwargs):
-		return self.socket.setsockopt(*args, **kwargs)
-
-	def getsockopt(self, *args, **kwargs):
-		return self.socket.getsockopt(*args, **kwargs)
-
-	def close(self):
-		return self.socket.close()
-
-	def __del__(self):
-		self.socket.close()
+			# Create a new TCPConnection for the socket 
+			self.connection_class(self, client_socket, client_addr)

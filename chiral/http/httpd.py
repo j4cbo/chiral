@@ -49,7 +49,8 @@ class HTTPResponse(object):
 		505: "HTTP Version Not Supported"
 	}
 
-	def __init__(self, code=500, content_type="text/plain", headers = {}, content=None):
+	def __init__(self, conn, code=500, content_type="text/plain", headers = {}, content=None):
+		self.conn = conn
 		self.headers = headers
 		self.content = content
 		self.code = code
@@ -69,12 +70,12 @@ class HTTPResponse(object):
 			"\r\n".join(("%s: %s" % (k, v)) for k, v in self.headers.iteritems())
 		)
 
-	def write_out(self, sock):
+	def write_out(self):
 		self.headers["Content-Length"] = len(self.content)
 		output = self.render_headers() + self.content
 		#print "--HTTP OUTPUT--\n%s\n----" % (output, )
 		#print "writing on fd %s" % (sock.socket.fileno(),)
-		yield sock.send(output)
+		yield self.conn.send(output)
 		return
 
 
@@ -109,6 +110,7 @@ class HTTPConnection(tcp.TCPConnection):
 
 	def send_error(self, code, extra_content = ""):
 		resp = HTTPResponse(
+			conn = self,
 			code = code,
 			content = "<html><head><title>%s</title></head><body><h1>%s</h1>%s</body></html>" % (
 				HTTPResponse.codes[code],
@@ -116,7 +118,7 @@ class HTTPConnection(tcp.TCPConnection):
 				extra_content
 			)
 		)
-		return resp.write_out(self.sock)
+		return resp.write_out()
 
 	def request_loop_done(self, tasklet, res, exc_info):
 		# If an error is thrown from request_loop, print it out and close
@@ -155,7 +157,7 @@ class HTTPConnection(tcp.TCPConnection):
 
 			# Set up request and response objects
 			req = HTTPRequest(req_lines)
-			response = HTTPResponse()
+			response = HTTPResponse(self)
 
 			# Request processing here
 			if req.url == "/":
@@ -168,13 +170,13 @@ class HTTPConnection(tcp.TCPConnection):
 				# It's a persistent connection; send the response and then wait for another request
 				response.headers["Connection"] = "keep-alive"
 				#print "writing out"
-				yield response.write_out(self.sock)
+				yield response.write_out()
 				#print "writing out done"
 			else:
 				# Just write and close.
 				response.headers["Connection"] = "close"
 				#print "writing out (no keep-alive)"
-				yield response.write_out(self.sock)
+				yield response.write_out()
 				#print "writing out done (no keep-alive)"
 				self.close()
 				return

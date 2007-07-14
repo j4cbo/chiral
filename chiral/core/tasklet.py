@@ -398,12 +398,6 @@ class Tasklet(object):
 		# Start the generator
 		self._next_round(None, None)
 
-		# If the generator failed during its first round, pass the exception on up
-		# to the code that instantiated this tasklet.
-		if self.state == Tasklet.STATE_FAILED:
-			exc_type, exc, exc_traceback = self.result[1]
-			raise exc_type, exc, exc_traceback
-
 	def get_message_actions(self):
 		"""Dictionary mapping message names to actions ('accept' or
 		'discard' or 'defer').  Should normally not be accessed
@@ -589,6 +583,9 @@ class Tasklet(object):
 		self._completion_callbacks.clear()
 		for callback in callbacks:
 			callback(self, return_value, return_exception)
+
+		if len(callbacks) == 0 and return_exception:
+			warnings.warn("Orphan tasklet %s failed with %s" % (self, return_exception))
 
 	def send_message(self, message):
 		"""Send a message to be received by the tasklet as an event.
