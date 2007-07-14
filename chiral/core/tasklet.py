@@ -62,16 +62,18 @@ class WaitCondition(object):
 
 	def __init__(self):
 		'''Abstract base class; do not call directly.'''
-		self.triggered = False
 
 	def arm(self, tasklet):
 		'''Prepare the wait condition to receive events.
 
-		When a WaitCondition receives the event it is waiting for, it should call the
+		If the event the WaitCondition is waiting for has already occurred, arm()
+		should return a 2-tuple (event, exception) of its result; if an exception
+		was raised, the event should be None, otherwise the exception should be None.
+
+		Otherwise, arm() should return None, and once the event it is waiting for
+		has happened, it should call the
 		L{wait_condition_fired<Tasklet.wait_condition_fired>} of the tasklet, with
-		the WaitCondition object (i.e. self) as argument.  The method returns True or
-		False; if it returns True, it means the WaitCondition object must "rearm" itself
-		(continue to monitor events), otherwise it should disarm.
+		the WaitCondition object (i.e. self) as argument. 
 
 		@parameter tasklet: the tasklet instance the wait condition is
 		  to be associated with.
@@ -97,7 +99,7 @@ class WaitForCallback(WaitCondition):
 	Returns the value that it is called with, or None.
 	'''
 
-	__slots__ = 'triggered', '_callback'
+	__slots__ = '_callback'
 
 	def __init__(self):
 		'''
@@ -117,9 +119,7 @@ class WaitForCallback(WaitCondition):
 
 	def __call__(self, return_value=None):
 
-		self.triggered = True
 		retval = self._callback(self, return_value)
-		self.triggered = False
 		return retval
 
 	def throw(self, exc=None):
@@ -128,9 +128,7 @@ class WaitForCallback(WaitCondition):
 		elif isinstance(exc, Exception):
 			exc = (type(exc), exc, None)
 
-		self.triggered = True
 		retval = self._callback(self, None, exc)
-		self.triggered = False
 
 		return retval
 
@@ -143,19 +141,18 @@ class WaitForNothing(WaitCondition):
 	An object that causes the tasklet yielding it to resume immediately with the given value.
 	'''
 
-	__slots__ = 'triggered', 'value'
+	__slots__ = 'value'
 
 	def __init__(self, value):
 		'''
 		Creates a wait condition that returns immediately.
 		'''
 		WaitCondition.__init__(self)
-		self.triggered = True
 		self.value = value
 
 	def arm(self, tasklet):
 		'''Overrides WaitCondition.arm'''
-		tasklet.wait_condition_fired(self, self.value)
+		return (self.value, None)
 
 	def disarm(self):
 		'''Overrides WaitCondition.disarm'''
@@ -173,7 +170,7 @@ class WaitForTasklet(WaitCondition):
 	raised an exception, the exception will be propagated into the caller.
 	'''
 
-	__slots__ = 'tasklet', '_id', 'triggered', '_callback'
+	__slots__ = 'tasklet', '_id', '_callback'
 
 	def __init__(self, tasklet):
 		'''An object that waits for another tasklet to complete'''
@@ -184,10 +181,14 @@ class WaitForTasklet(WaitCondition):
 
 	def arm(self, tasklet):
 		'''See L{WaitCondition.arm}'''
+
+		# If the tasklet has already finished, return its value now.
+		if self.tasklet.state in (Tasklet.STATE_COMPLETED, Tasklet.STATE_FAILED):
+			return self.tasklet.return_value, self.tasklet.exc_info
+
 		self._callback = tasklet.wait_condition_fired
 #		print "ARMING: %s after %s" % (tasklet, self.tasklet)
-		# If the tasklet has already completed or failed, add_completion_callback
-		# will run the callback immediately.
+
 		if self._id is None:
 			self._id = self.tasklet.add_completion_callback(self._completion_cb)
 
@@ -201,9 +202,8 @@ class WaitForTasklet(WaitCondition):
 		assert tasklet is self.tasklet
 
 		self._id = None
-		self.triggered = True
+
 		self._callback(self, retval, exc_info)
-		self.triggered = False
 
 		self.tasklet = None
 		self._callback = None
@@ -462,22 +462,18 @@ class Tasklet(object):
 					" generators, or a single Message, not %s" % (repr(gen_value),)
 				)
 
-			# If a WaitForNothing was yielded, loop around.
-			if isinstance(gen_value, WaitForNothing):
-				self._event = gen_value.value
+
+			arm_result = gen_value.arm(self)
+			if arm_result:
+				# If the WaitCondition was already ready, use its value
+				# and loop around.
+				self._event, self._exception = arm_result
 				continue
+			else:
+				stats.increment("chiral.core.tasklet.%s.waits" % self._gen_name)
 
-			if isinstance(gen_value, WaitForTasklet):
-				if gen_value.tasklet.state in (Tasklet.STATE_COMPLETED, Tasklet.STATE_FAILED):
-					self._event = gen_value.tasklet.return_value
-					self._exception = gen_value.tasklet.exc_info
-					continue
-
-
-			#print "Waiting on: %s" % (", ".join(repr(i) for i in self.wait_list))
+			
 			self.wait_condition = gen_value
-
-			self.wait_condition.arm(self)
 
 			# Do we have a message to receive? If so, that's our event.
 			#msg = self._dispatch_message()

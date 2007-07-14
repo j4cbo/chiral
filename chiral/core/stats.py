@@ -3,13 +3,19 @@ try:
 except NameError, e:
 	_stats = {}
 
-def increment(key):
-	try:
-		_stats[key] += 1
-	except KeyError:
-		_stats[key] = 1
+
+if __debug__:
+	def increment(key):
+		try:
+			_stats[key] += 1
+		except KeyError:
+			_stats[key] = 1
+else:
+	def increment(key):
+		pass
 
 def dump():
 	print "Statistics:"
-	for key, value in _stats.iteritems():
-		print "%s: %d" % (key, value)
+	keys = sorted(_stats.iterkeys())
+	for key in keys:
+		print "%s: %d" % (key, _stats[key])

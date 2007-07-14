@@ -1,7 +1,7 @@
 #/usr/bin/env python2.5
 
 from chiral.inet import netcore, tcp
-from chiral.core import callbacks, stats
+from chiral.core import stats
 from chiral.http import httpd
 
 c = netcore.EpollLooper()
