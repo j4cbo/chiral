@@ -77,7 +77,7 @@ class TCPConnection(object):
 			"""Helper tasklet created by read_line if data is not immediately available."""
 			while True:
 				# Read more data
-				new_data = yield self.recv(max_len)
+				new_data = yield self.recv(max_len, try_now = False)
 				if not new_data:
 					raise ConnectionClosedException()
 
@@ -97,8 +97,31 @@ class TCPConnection(object):
 			out, self._buffer = self._buffer.split(delimiter, 1)
 			return tasklet.WaitForNothing(out)
 
-		# Otherwise, we need to spawn a new tasklet
+		# If not, attempt to recv()
+		try:
+			new_data = self.client_sock.recv(max_len)
+		except socket.error, exc:
+			if exc[0] == errno.EAGAIN:
+				# OK, we're going to need to spawn a new tasklet.
+				return tasklet.WaitForTasklet(tasklet.Tasklet(_read_line_tasklet()))
+			else:
+				# Something else is broken; raise it again.
+				raise exc
+
+		# So recv() worked and we now have some more data. Add it to the buffer,
+		# and check for the delimiter again.
+		self._buffer += new_data
+		if delimiter in self._buffer[:max_len]:
+			out, self._buffer = self._buffer.split(delimiter, 1)
+			return tasklet.WaitForNothing(out)
+
+		# No luck finding the delimiter. Make sure we haven't overflowed...
+		if len(self._buffer) > max_len:
+			raise ConnectionOverflowException()
+
+		# The line isn't available yet. Spawn a tasklet to deal with it.
 		return tasklet.WaitForTasklet(tasklet.Tasklet(_read_line_tasklet()))
+
 
 
 	def read_exactly(self, length, read_increment = 4096):
@@ -126,53 +149,67 @@ class TCPConnection(object):
 
 			self._buffer += new_data
 
-	def _async_socket_operation(self, socket_op, cb_func, parameter):
+	def _async_socket_operation(self, socket_op, cb_func, parameter, try_now):
 		"""Helper function for asynchronous operations."""
 
-		try:
-			res = socket_op(parameter)
-		except socket.error, exc:
-			if exc[0] == errno.EAGAIN:
-				callback = tasklet.WaitForCallback()
+		callback = tasklet.WaitForCallback()
 
-				def blocked_operation_handler():
-					"""Callback for asynchronous operations."""
-					# Prevent pylint from complaining about "except Exception"
-					# pylint: disable-msg=W0703
-					try:
-						res = socket_op(parameter)
-					except Exception, exc:
-						callback.throw(exc)
-					else:
-						callback(res)
-
-				cb_func(self.client_sock, blocked_operation_handler)
-				return callback
-			else:
+		def blocked_operation_handler():
+			"""Callback for asynchronous operations."""
+			# Prevent pylint from complaining about "except Exception"
+			# pylint: disable-msg=W0703
+			try:
+				res = socket_op(parameter)
+			except Exception, exc:
 				callback.throw(exc)
+			else:
+				callback(res)
+
+		if try_now:
+			# Attempt socket_op now; only pass it to the callback if it
+			# returns EAGAIN.
+			try:
+				res = socket_op(parameter)
+			except socket.error, exc:
+				if exc[0] == errno.EAGAIN:
+					cb_func(self.client_sock, blocked_operation_handler)
+					return callback
+				else:
+					callback.throw(exc)
+		else:
+			# Don't bother. (try_now is set False by functions like read_line,
+			# which attempt the low-level operations themselves first to avoid
+			# creating Tasklets unnecessarily.)
+			cb_func(self.client_sock, blocked_operation_handler)
+			return callback
+
 
 		return tasklet.WaitForNothing(res)
 
-	def recv(self, buflen):
+	def recv(self, buflen, try_now=True):
 		"""
 		Read data from the socket. Returns a Callback, which will
-		fire as soon as data is available.
+		fire as soon as data is available. Set try_now to False if a
+		low-level recv() has already been attempted.
 		"""
 		return self._async_socket_operation(
 			self.client_sock.recv,
 			self.server.looper.wait_for_readable,
-			buflen
+			buflen,
+			try_now
 		)
 
-	def send(self, data):
+	def send(self, data, try_now=True):
 		"""
 		Send data. Returns a Callback, which fires once the data has been sent.
+		Set try_now to False if a low-level recv() has already been attempted.
 		"""
 
 		return self._async_socket_operation(
 			self.client_sock.send,
 			self.server.looper.wait_for_writeable,
-			data
+			data,
+			try_now
 		)
 
 	def __init__(self, server, sock, addr):
