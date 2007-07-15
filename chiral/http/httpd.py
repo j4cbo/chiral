@@ -90,7 +90,6 @@ class HTTPResponse(object):
 		#print "--HTTP OUTPUT--\n%s\n----" % (output, )
 		#print "writing on fd %s" % (sock.socket.fileno(),)
 		yield self.conn.send(output)
-		return
 
 
 class HTTPRequest(object):
@@ -155,8 +154,6 @@ class HTTPConnection(tcp.TCPConnection):
 			while True:
 				try:
 					line = yield self.read_line(delimiter="\r\n")
-#					print "read %s on fd %s" % (line, self.sock.socket.fileno())
-					#print "read \"%s\"" % (line, )
 				except tcp.ConnectionOverflowException:
 					self.send_error(400).add_completion_callback(self.close)
 				except (tcp.ConnectionClosedException, socket.error):
