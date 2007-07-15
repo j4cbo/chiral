@@ -449,22 +449,24 @@ class Tasklet(object):
 
 			self.state = Tasklet.STATE_SUSPENDED
 
-			# If the generator yielded a Message, send it, then loop again.
-			if isinstance(gen_value, Message):
+			# Make sure each yielded value is a WaitCondition or Message
+
+			if isinstance(gen_value, WaitCondition):
+				# If it's a WaitCondition (most common case), we can skip
+				# all the other isinstance calls.
+				pass
+			elif isinstance(gen_value, types.GeneratorType):
+				gen_value = WaitForTasklet(Tasklet(gen_value))
+			elif isinstance(gen_value, Tasklet):
+				gen_value = WaitForTasklet(gen_value)
+			elif isinstance(gen_value, Message):
+				# If the generator yielded a Message, send it, then loop again.
 				msg = gen_value
 				self.state = Tasklet.STATE_MSGSEND
 				msg.sender = self
 				msg.dest.send_message(msg)
 				# Run again, now that the message has been sent.
 				continue
-
-			# Make sure each yielded value is a WaitCondition
-			if isinstance(gen_value, WaitCondition):
-				pass
-			elif isinstance(gen_value, Tasklet):
-				gen_value = WaitForTasklet(gen_value)
-			elif isinstance(gen_value, types.GeneratorType):
-				gen_value = WaitForTasklet(Tasklet(gen_value))
 			else:
 				raise TypeError(
 					"yielded values must be WaitConditions,"
@@ -477,9 +479,6 @@ class Tasklet(object):
 				# and loop around.
 				next_event, next_exception = arm_result
 				continue
-			else:
-				stats.increment("chiral.core.tasklet.%s.waits" % self._gen_name)
-
 			
 			self.wait_condition = gen_value
 
