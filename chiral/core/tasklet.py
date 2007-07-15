@@ -459,11 +459,13 @@ class Tasklet(object):
 				continue
 
 			# Make sure each yielded value is a WaitCondition
-			if isinstance(gen_value, Tasklet):
+			if isinstance(gen_value, WaitCondition):
+				pass
+			elif isinstance(gen_value, Tasklet):
 				gen_value = WaitForTasklet(gen_value)
 			elif isinstance(gen_value, types.GeneratorType):
 				gen_value = WaitForTasklet(Tasklet(gen_value))
-			elif not isinstance(gen_value, WaitCondition):
+			else:
 				raise TypeError(
 					"yielded values must be WaitConditions,"
 					" generators, or a single Message, not %s" % (repr(gen_value),)
