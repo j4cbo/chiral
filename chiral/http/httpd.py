@@ -89,7 +89,7 @@ class HTTPResponse(object):
 		output = self.render_headers() + self.content
 		#print "--HTTP OUTPUT--\n%s\n----" % (output, )
 		#print "writing on fd %s" % (sock.socket.fileno(),)
-		yield self.conn.send(output)
+		return self.conn.send(output)
 
 
 class HTTPRequest(object):
