@@ -8,7 +8,13 @@ import select
 import traceback
 import weakref
 
-class Looper(object):
+# Use psyco for this module, if available.
+try:
+	import psyco.classes
+except ImportError:
+	psyco = False
+
+class Looper(psyco.classes.psyobj if psyco else object):
 	"""
 	Base class for Looper objects.
 	"""

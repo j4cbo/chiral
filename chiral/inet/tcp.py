@@ -219,7 +219,7 @@ class TCPConnection(object):
 
 		tasklet.Tasklet(self.handler())
 
-class TCPServer(tasklet.Tasklet):
+class TCPServer(object):
 	"""
 	This is a general-purpose TCP server. It manages one master
 	socket which listens on a TCP port and accepts connections;
@@ -243,7 +243,7 @@ class TCPServer(tasklet.Tasklet):
 		self.master_socket.bind(self.bind_addr)
 		self.master_socket.listen(5)
 
-		tasklet.Tasklet.__init__(self, self.acceptor())
+		self.tasklet = tasklet.Tasklet(self.acceptor())
 
 	def acceptor(self):
 		"""Main tasklet function.

@@ -57,6 +57,12 @@ from chiral.core import stats
 if sys.version_info[:2] < (2, 5):
 	raise RuntimeError("chiral.core.callbacks requires Python 2.5 for generator expressions.")
 
+# Use psyco for this module, if available.
+try:
+	import psyco.classes
+except ImportError:
+	psyco = False
+
 # Some of the classes here are very simple (Message, etc).
 # but for good reason. Suppress pylint's warning about insufficient public methods.
 # pylint: disable-msg=R0903
@@ -75,7 +81,7 @@ def task(gen):
 
 	return new_tasklet
 
-class WaitCondition(object):
+class WaitCondition(psyco.classes.psyobj if psyco else object):
 	'''
 	Base class for all wait-able condition objects.
 
@@ -122,7 +128,8 @@ class WaitForCallback(WaitCondition):
 	Returns the value that it is called with, or None.
 	'''
 
-	__slots__ = '_callback'
+	if not psyco:
+		__slots__ = '_callback'
 
 	def __init__(self):
 		'''
@@ -165,7 +172,8 @@ class WaitForNothing(WaitCondition):
 	An object that causes the tasklet yielding it to resume immediately with the given value.
 	'''
 
-	__slots__ = 'value'
+	if not psyco:
+		__slots__ = 'value'
 
 	def __init__(self, value):
 		'''
@@ -194,7 +202,8 @@ class WaitForTasklet(WaitCondition):
 	raised an exception, the exception will be propagated into the caller.
 	'''
 
-	__slots__ = 'tasklet', '_id', '_callback'
+	if not psyco:
+		__slots__ = 'tasklet', '_id', '_callback'
 
 	def __init__(self, tasklet):
 		'''An object that waits for another tasklet to complete'''
@@ -238,10 +247,11 @@ class WaitForTasklet(WaitCondition):
 	def __repr__(self):
 		return "<WaitForTasklet: for %s>" % self.tasklet
 
-class Message(object):
+class Message(psyco.classes.psyobj if psyco else object):
 	'''A message that can be received by or sent to a tasklet.'''
 
-	__slots__ = 'name', 'dest', 'value', 'sender'
+	if not psyco:
+		__slots__ = 'name', 'dest', 'value', 'sender'
 
 	ACCEPT, DEFER, DISCARD = range(3)
 
@@ -287,7 +297,8 @@ class WaitForMessages(WaitCondition):
 	Returns the Message object that was sent to the tasklet.
 	'''
 
-	__slots__ = 'actions', '_tasklet'
+	if not psyco:
+		__slots__ = 'actions', '_tasklet'
 
 	def __init__(self, accept=None, defer=None, discard=None):
 		'''
@@ -326,23 +337,7 @@ class WaitForMessages(WaitCondition):
 			del self._tasklet.message_actions[name]
 
 
-# Store a global list of all current tasklets. The try/except block
-# ensures that even if this module is reloaded, only one list of
-# tasklets will ever exist.
-try:
-	_TASKLETS # pylint: disable-msg=W0104
-except NameError:
-	_TASKLETS = weakref.WeakValueDictionary()
-
-def dump():
-	"""Print a list (to stdout) of all currently known Tasklet instances and their state."""
-	print ""
-	print "Tasklets:"
-	for tasklet in _TASKLETS.values():
-		print repr(tasklet)
-	print ""
-
-class Tasklet(object):
+class Tasklet(psyco.classes.psyobj if psyco else object):
 	'''
 	An object that launches and manages one tasklet.
 
@@ -358,15 +353,16 @@ class Tasklet(object):
 
 	state_names = "running", "suspended", "msgsend", "completed", "failed"
 
-	__slots__ = (
-		"_completion_callbacks",
-		"wait_condition",
-		"_message_queue", "_message_actions",
-		"state",
-		"result",
-		"gen",
-		"_gen_name", "__weakref__"
-	)
+	if not psyco:
+		__slots__ = (
+			"_completion_callbacks",
+			"wait_condition",
+			"_message_queue", "_message_actions",
+			"state",
+			"result",
+			"gen",
+			"_gen_name"
+		)
 
 	def __init__(self, gen):
 		'''
@@ -385,8 +381,6 @@ class Tasklet(object):
 		self._message_actions = {}
 		self.state = Tasklet.STATE_SUSPENDED
 		self.result = None
-
-		_TASKLETS[id(self)] = self
 
 		assert isinstance(gen, types.GeneratorType)
 
