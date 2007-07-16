@@ -138,8 +138,7 @@ class TCPConnection(object):
 			if len(self._buffer) >= length:
 				out = self._buffer[:length]
 				self._buffer = self._buffer[length:]
-				yield out
-				return
+				raise StopIteration(out)
 
 			# Otherwise, read more
 			bytes_left = length - len(self._buffer)
@@ -175,14 +174,13 @@ class TCPConnection(object):
 					cb_func(self.client_sock, blocked_operation_handler)
 					return callback
 				else:
-					callback.throw(exc)
+					raise exc
 		else:
 			# Don't bother. (try_now is set False by functions like read_line,
 			# which attempt the low-level operations themselves first to avoid
 			# creating Tasklets unnecessarily.)
 			cb_func(self.client_sock, blocked_operation_handler)
 			return callback
-
 
 		return tasklet.WaitForNothing(res)
 
@@ -204,7 +202,6 @@ class TCPConnection(object):
 		Send data. Returns a Callback, which fires once the data has been sent.
 		Set try_now to False if a low-level recv() has already been attempted.
 		"""
-
 		return self._async_socket_operation(
 			self.client_sock.send,
 			self.server.looper.wait_for_writeable,
@@ -235,12 +232,10 @@ class TCPServer(tasklet.Tasklet):
 	connection_class = TCPConnection
 
 	connections = []
-	acceptors = []
 
 	def __init__(self, looper, bind_addr = ('', 80)):
 		self.looper = looper
 		self.bind_addr = bind_addr
-
 
 		self.master_socket = socket.socket()
 		self.master_socket.setblocking(0)
@@ -272,6 +267,10 @@ class TCPServer(tasklet.Tasklet):
 					yield callback
 				else:
 					break
+
+			# Set the client nonblocking. Socket objects have some magic that
+			# pylint doesn't grok, so suppress its "no setblocking member" warning.
+			client_socket.setblocking(0) # pylint: disable-msg=E1101
 
 			# Create a new TCPConnection for the socket 
 			self.connection_class(self, client_socket, client_addr)

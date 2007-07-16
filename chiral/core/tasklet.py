@@ -425,7 +425,7 @@ class Tasklet(object):
 				if next_exception:
 					exc_type, exc, exc_tb = next_exception
 					gen_value = self.gen.throw(exc_type, exc, exc_tb)
-				elif next_event:
+				elif next_event is not None:
 					gen_value = self.gen.send(next_event)
 				else:
 					gen_value = self.gen.next()
