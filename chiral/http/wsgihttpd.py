@@ -7,6 +7,9 @@ from cStringIO import StringIO
 
 import socket
 import sys
+import traceback
+
+_CHIRAL_RELOADABLE = True
 
 class HTTPResponse(object):
 	"""Response to an HTTP request."""
@@ -22,10 +25,6 @@ class HTTPResponse(object):
 
 		self.status = status
 		self.headers["Content-Type"] = "text/html"
-
-		self.content = "<html><head><title>%s</title></head><body><h1>%s</h1></body>%s</html>" % (
-			status, status, extra_content
-		)
 
 	def render_headers(self):
 		"""Return the response line and headers as a string."""
@@ -50,12 +49,17 @@ class HTTPConnection(tcp.TCPConnection):
 
 	MAX_REQUEST_LENGTH = 8192
 
-	def send_error_and_close(self, status, extra_content = ""):
+	def send_error(self, status, extra_content = ""):
 		"""Create and send an HTTPResponse for the given status code."""
-		resp = HTTPResponse(conn = self)
-		resp.default_error(status, extra_content)
-		resp.write_out()
-		self.close()
+		resp = HTTPResponse(conn = self, status = status, headers = { "Content-Type": "text/html" })
+
+		content = "<html><head><title>%s</title></head><body><h1>%s</h1></body>%s</html>" % (
+			status, status, extra_content
+		)
+
+		resp.headers["Content-Length"] = len(content)
+
+		return self.send(resp.render_headers() + content)
 
 	def handler(self):
 		"""The main request processing loop."""
@@ -65,7 +69,8 @@ class HTTPConnection(tcp.TCPConnection):
 			try:
 				method, url, protocol = (yield self.read_line(delimiter="\r\n")).split(' ')
 			except (tcp.ConnectionOverflowException, ValueError):
-				self.send_error_and_close("400 Bad Request")
+				yield self.send_error("400 Bad Request")
+				self.close()
 				return
 			except (tcp.ConnectionClosedException, socket.error):
 				return
@@ -97,6 +102,13 @@ class HTTPConnection(tcp.TCPConnection):
 				'SERVER_PROTOCOL': protocol
 			}
 
+			# Split query string out of URL, if present
+			url = url.split('?', 1)
+			if len(url) > 1:
+				environ["PATH_INFO"], environ["QUERY_STRING"] = url
+			else:
+				environ["PATH_INFO"], = url
+
 			# Read the rest of the request header, updating the WSGI environ dict
 			# with each key/value pair
 			while True:
@@ -106,7 +118,8 @@ class HTTPConnection(tcp.TCPConnection):
 						break
 					name, value = line.split(":", 1)
 				except (tcp.ConnectionOverflowException, ValueError):
-					self.send_error_and_close("400 Bad Request")
+					self.send_error("400 Bad Request")
+					self.close()
 					return
 				except (tcp.ConnectionClosedException, socket.error):
 					return
@@ -155,7 +168,17 @@ class HTTPConnection(tcp.TCPConnection):
 				return write
 
 			# Invoke the application.
-			result = self.server.application(environ, start_response)
+			try:
+				result = self.server.application(environ, start_response)
+			except Exception:
+				exc_formatted = "<pre>%s</pre>" % traceback.format_exc()
+				yield self.send_error("500 Internal Server Error", exc_formatted)
+
+				# Close if necessary
+				if not should_keep_alive:
+					self.close()
+					break
+				continue
 
 			# If it returned an iterable of length 1, then our Content-Length
 			# is that of the first result. Otherwise, we'll close the connection

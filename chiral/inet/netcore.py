@@ -8,13 +8,7 @@ import select
 import traceback
 import weakref
 
-# Use psyco for this module, if available.
-try:
-	import psyco.classes
-except ImportError:
-	psyco = False
-
-class Looper(psyco.classes.psyobj if psyco else object):
+class Looper(object):
 	"""
 	Base class for Looper objects.
 	"""
@@ -225,7 +219,7 @@ class EpollLooper(Looper):
 			return False
 
 		try:
-			events = epoll.epoll_wait(self.epoll_fd, 50, delay)
+			events = epoll.epoll_wait(self.epoll_fd, 10, delay)
 		except KeyboardInterrupt:
 			# Just return.
 			return False
