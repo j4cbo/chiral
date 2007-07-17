@@ -16,7 +16,7 @@ class ConnectionClosedException(Exception):
 	"""Indicates that the connection was closed."""
 	pass
 
-class TCPConnection(object):
+class TCPConnection(tasklet.Tasklet):
 	"""
 	Provides basic interface for TCP connections.
 	"""
@@ -25,7 +25,7 @@ class TCPConnection(object):
 		"""
 		Main event processing loop.
 
-		The handler() method will be started as a Tasklet when the TCPConnection
+		The handler() method will be run as a Tasklet when the TCPConnection
 		is initialized. It should be overridden in the derived class.
 		"""
 		raise NotImplementedError
@@ -217,9 +217,9 @@ class TCPConnection(object):
 		self.client_addr = addr
 		self._buffer = ""
 
-		tasklet.Tasklet(self.handler())
+		tasklet.Tasklet.__init__(self, self.handler())
 
-class TCPServer(object):
+class TCPServer(tasklet.Tasklet):
 	"""
 	This is a general-purpose TCP server. It manages one master
 	socket which listens on a TCP port and accepts connections;
@@ -243,7 +243,7 @@ class TCPServer(object):
 		self.master_socket.bind(self.bind_addr)
 		self.master_socket.listen(5)
 
-		self.tasklet = tasklet.Tasklet(self.acceptor())
+		tasklet.Tasklet.__init__(self, self.acceptor())
 
 	def acceptor(self):
 		"""Main tasklet function.

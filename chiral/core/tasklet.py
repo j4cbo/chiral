@@ -325,6 +325,21 @@ class WaitForMessages(WaitCondition):
 		for name in self.actions:
 			del self._tasklet.message_actions[name]
 
+# Store a global list of all current tasklets. The try/except block
+# ensures that even if this module is reloaded, only one list of
+# tasklets will ever exist.
+try:
+	_TASKLETS # pylint: disable-msg=W0104
+except NameError:
+	_TASKLETS = weakref.WeakValueDictionary()
+
+def dump():
+	"""Print a list (to stdout) of all currently known Tasklet instances and their state."""
+	print ""
+	print "Tasklets:"
+	for tasklet in _TASKLETS.values():
+		print repr(tasklet)
+	print ""
 
 class Tasklet(object):
 	'''
@@ -341,16 +356,6 @@ class Tasklet(object):
 	STATE_RUNNING, STATE_SUSPENDED, STATE_MSGSEND, STATE_COMPLETED, STATE_FAILED = range(5)
 
 	state_names = "running", "suspended", "msgsend", "completed", "failed"
-
-	__slots__ = (
-		"_completion_callbacks",
-		"wait_condition",
-		"_message_queue", "_message_actions",
-		"state",
-		"result",
-		"gen",
-		"_gen_name"
-	)
 
 	def __init__(self, gen):
 		'''
@@ -369,6 +374,8 @@ class Tasklet(object):
 		self._message_actions = {}
 		self.state = Tasklet.STATE_SUSPENDED
 		self.result = None
+
+		_TASKLETS[id(self)] = self
 
 		assert isinstance(gen, types.GeneratorType)
 
@@ -519,6 +526,7 @@ class Tasklet(object):
 #		traceback.print_stack(file=sys.stdout)
 
 		assert triggered_cond is self.wait_condition
+		self.wait_condition = None
 
 		self._next_round(return_value, exc_info)
 
@@ -591,14 +599,16 @@ class Tasklet(object):
 
 	def __repr__(self):
 
-		cc_list = ", ".join(str(type(i)) for i in self._completion_callbacks.values())
-		if cc_list:
-			cc_list = ", completion callbacks " + cc_list
+		if self.state in (Tasklet.STATE_COMPLETED, Tasklet.STATE_FAILED):
+			failure_info = " with %r / %r" % self.result
+		else:
+			failure_info = ""
 			
-		return "<Tasklet: id %s, \"%s\", %s%s%s>" % (
+		return "<%s: id %s, \"%s\", %s%s%s>" % (
+			self.__class__.__name__,
 			id(self),
 			self._gen_name,
 			self.state_names[self.state],
-			(", waiting on %s" % self.wait_condition) if self.wait_condition else "",
-			cc_list
+			failure_info,
+			(", waiting on %s" % self.wait_condition) if self.wait_condition else ""
 		)
