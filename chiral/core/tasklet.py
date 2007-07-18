@@ -54,8 +54,10 @@ import traceback
 
 from chiral.core import stats
 
+_CHIRAL_RELOADABLE = True
+
 if sys.version_info[:2] < (2, 5):
-	raise RuntimeError("chiral.core.callbacks requires Python 2.5 for generator expressions.")
+	raise RuntimeError("chiral.core.callbacks requires Python 2.5 for generator expressions.") #pragma: no cover
 
 # Some of the classes here are very simple (Message, etc).
 # but for good reason. Suppress pylint's warning about insufficient public methods.
@@ -122,7 +124,7 @@ class WaitForCallback(WaitCondition):
 	Returns the value that it is called with, or None.
 	'''
 
-	__slots__ = '_callback'
+	#__slots__ = '_callback'
 
 	def __init__(self):
 		'''
@@ -165,7 +167,7 @@ class WaitForNothing(WaitCondition):
 	An object that causes the tasklet yielding it to resume immediately with the given value.
 	'''
 
-	__slots__ = 'value'
+	#__slots__ = 'value'
 
 	def __init__(self, value):
 		'''
@@ -194,7 +196,7 @@ class WaitForTasklet(WaitCondition):
 	raised an exception, the exception will be propagated into the caller.
 	'''
 
-	__slots__ = 'tasklet', '_id', '_callback'
+	#__slots__ = 'tasklet', '_id', '_callback'
 
 	def __init__(self, tasklet):
 		'''An object that waits for another tasklet to complete'''
@@ -241,7 +243,7 @@ class WaitForTasklet(WaitCondition):
 class Message(object):
 	'''A message that can be received by or sent to a tasklet.'''
 
-	__slots__ = 'name', 'dest', 'value', 'sender'
+	#__slots__ = 'name', 'dest', 'value', 'sender'
 
 	ACCEPT, DEFER, DISCARD = range(3)
 
@@ -287,7 +289,7 @@ class WaitForMessages(WaitCondition):
 	Returns the Message object that was sent to the tasklet.
 	'''
 
-	__slots__ = 'actions', '_tasklet'
+	#__slots__ = 'actions', '_tasklet'
 
 	def __init__(self, accept=None, defer=None, discard=None):
 		'''
@@ -357,7 +359,7 @@ class Tasklet(object):
 
 	state_names = "running", "suspended", "msgsend", "completed", "failed"
 
-	def __init__(self, gen):
+	def __init__(self, gen, default_callback = None):
 		'''
 		Launch a generator tasklet.
 
@@ -368,7 +370,11 @@ class Tasklet(object):
 
 		'''
 
-		self._completion_callbacks = {}
+		if default_callback:
+			self._completion_callbacks = { id(default_callback): default_callback }
+		else:
+			self._completion_callbacks = {}
+
 		self.wait_condition = None
 		self._message_queue = []
 		self._message_actions = {}
@@ -603,11 +609,14 @@ class Tasklet(object):
 			failure_info = " with %r / %r" % self.result
 		else:
 			failure_info = ""
-			
-		return "<%s: id %s, \"%s\", %s%s%s>" % (
-			self.__class__.__name__,
+
+		name = self.__class__.__name__
+		if name == "Tasklet":
+			name = "\"%s\"" % (self._gen_name, )
+
+		return "<Tasklet %s: %s, %s%s%s>" % (
 			id(self),
-			self._gen_name,
+			name,
 			self.state_names[self.state],
 			failure_info,
 			(", waiting on %s" % self.wait_condition) if self.wait_condition else ""

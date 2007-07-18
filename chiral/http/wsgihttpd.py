@@ -186,7 +186,7 @@ class HTTPConnection(tcp.TCPConnection):
 			# is that of the first result. Otherwise, we'll close the connection
 			# to indicate completion.
 			try:
-				if len(result) == 1:
+				if len(result) == 1 and not waiting_tasklet:
 					response.headers["Content-Length"] = len(result[0])
 				else:
 					should_keep_alive = False
@@ -230,7 +230,7 @@ class HTTPConnection(tcp.TCPConnection):
 			# If set_tasklet has been set, waiting_tasklet is a Tasklet that will
 			# complete once the response is done.
 			if waiting_tasklet:
-				yield waiting_tasklet[0]
+				yield waiting_tasklet[0](self)
 
 			# Close if necessary
 			if not should_keep_alive:

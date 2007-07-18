@@ -1,24 +1,33 @@
 #/usr/bin/env python2.5
 
-from chiral.inet import netcore, tcp
-from chiral.core import stats
-from chiral.http import httpd
+print "Loading..."
+
+from chiral.inet import netcore
+from chiral.core import stats, tasklet
+from chiral.http.wsgihttpd import HTTPServer
+from chiral.shell import ChiralShellServer
+from paste.pony import PonyMiddleware
+from chiral.http.introspect import IntrospectorApplication
+from chiral.web.comet import CometClock
 
 c = netcore.EpollLooper()
 
-daemon = httpd.HTTPServer(c, bind_addr = ('', 8082))
+def app(environ, start_response):
+	"""Simplest possible application object"""
+	print repr(environ)
+	start_response('200 OK', [('Content-Type', 'text/html')])
+	return ['Hello world!\n']
 
-def reloader():
-	c.schedule(reloader, 1)
 
-	print "Reloading HTTP server..."
-	try:
-		reload(httpd)
-		print "Reload complete."
-	except Exception, e:
-		print "Reload failed: %s" % e
+HTTPServer(
+	c,
+	bind_addr = ('', 8082),
+	application = PonyMiddleware(IntrospectorApplication(CometClock(c)))
+)
 
-#c.schedule(reloader, 5)
+ChiralShellServer(c, bind_addr = ('', 9123))
+
+print "Running..."
 
 c.run()
 

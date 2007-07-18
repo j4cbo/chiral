@@ -4,6 +4,7 @@ from chiral.core import tasklet
 import sys
 import socket
 import errno
+import weakref
 
 if sys.version_info[:2] < (2, 5):
 	raise RuntimeError("chiral.inet.tcp requires Python 2.5 for generator expressions.")
@@ -42,7 +43,7 @@ class TCPConnection(tasklet.Tasklet):
 		is about to be closed by the server. Perform any necessary cleanup here.
 		"""
 		
-	def close(self):
+	def close(self, *args):
 		"""
 		Call self.close() on a connection to perform a clean shutdown. The
 		handle_server_close() method will be called before closing the actual
@@ -51,7 +52,6 @@ class TCPConnection(tasklet.Tasklet):
 
 		self.handle_server_close()
 		self.client_sock.close()
-		self.server.connections.remove(self)
 
 	def client_closed(self):
 		"""
@@ -63,7 +63,25 @@ class TCPConnection(tasklet.Tasklet):
 		"""
 		self.handle_client_close()
 		self.client_sock.close()
-		self.server.connections.remove(self)
+
+	def _read_line_tasklet(self, max_len, delimiter):
+		"""Helper tasklet created by read_line if data is not immediately available."""
+		while True:
+			# Read more data
+			new_data = yield self.recv(max_len, try_now = False)
+			if not new_data:
+				raise ConnectionClosedException()
+
+			self._buffer += new_data
+			# Check if the delimiter is already in the buffer.
+			if delimiter in self._buffer[:max_len]:
+				out, self._buffer = self._buffer.split(delimiter, 1)
+				raise StopIteration(out)
+
+			# If not, and the buffer's longer than our expected line,
+			# we've had an overflow
+			if len(self._buffer) > max_len:
+				raise ConnectionOverflowException()
 
 
 	def read_line(self, max_len = 1024, delimiter = "\n"):
@@ -72,25 +90,6 @@ class TCPConnection(tasklet.Tasklet):
 		the client. If more than max_length characters are read before a
 		delimiter is found, a ConnectionOverflowException will be raised.
 		"""
-
-		def _read_line_tasklet():
-			"""Helper tasklet created by read_line if data is not immediately available."""
-			while True:
-				# Read more data
-				new_data = yield self.recv(max_len, try_now = False)
-				if not new_data:
-					raise ConnectionClosedException()
-
-				self._buffer += new_data
-				# Check if the delimiter is already in the buffer.
-				if delimiter in self._buffer[:max_len]:
-					out, self._buffer = self._buffer.split(delimiter, 1)
-					raise StopIteration(out)
-
-				# If not, and the buffer's longer than our expected line,
-				# we've had an overflow
-				if len(self._buffer) > max_len:
-					raise ConnectionOverflowException()
 
 		# Check if the delimiter is already in the buffer.
 		if delimiter in self._buffer[:max_len]:
@@ -103,7 +102,7 @@ class TCPConnection(tasklet.Tasklet):
 		except socket.error, exc:
 			if exc[0] == errno.EAGAIN:
 				# OK, we're going to need to spawn a new tasklet.
-				return tasklet.WaitForTasklet(tasklet.Tasklet(_read_line_tasklet()))
+				return tasklet.WaitForTasklet(tasklet.Tasklet(self._read_line_tasklet(max_len, delimiter)))
 			else:
 				# Something else is broken; raise it again.
 				raise exc
@@ -120,7 +119,7 @@ class TCPConnection(tasklet.Tasklet):
 			raise ConnectionOverflowException()
 
 		# The line isn't available yet. Spawn a tasklet to deal with it.
-		return tasklet.WaitForTasklet(tasklet.Tasklet(_read_line_tasklet()))
+		return tasklet.WaitForTasklet(tasklet.Tasklet(self._read_line_tasklet(max_len, delimiter)))
 
 
 
@@ -211,13 +210,14 @@ class TCPConnection(tasklet.Tasklet):
 
 	def __init__(self, server, sock, addr):
 		self.server = server
-		self.server.connections.append(self)
+		self.server.connections[id(self)] = self
 
 		self.client_sock = sock
 		self.client_addr = addr
 		self._buffer = ""
 
 		tasklet.Tasklet.__init__(self, self.handler())
+		self.add_completion_callback(self.close)
 
 class TCPServer(tasklet.Tasklet):
 	"""
@@ -231,11 +231,10 @@ class TCPServer(tasklet.Tasklet):
 
 	connection_class = TCPConnection
 
-	connections = []
-
 	def __init__(self, looper, bind_addr = ('', 80)):
 		self.looper = looper
 		self.bind_addr = bind_addr
+		self.connections = weakref.WeakValueDictionary()
 
 		self.master_socket = socket.socket()
 		self.master_socket.setblocking(0)

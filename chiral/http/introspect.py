@@ -104,6 +104,9 @@ class IntrospectorApplication(object):
 	tasklet_template = MarkupTemplate(INTROSPECTOR_TASKLET_TEMPLATE)
 	test_template = MarkupTemplate(INTROSPECTOR_TEST_TEMPLATE)
 
+	def __init__(self, next_application = None):
+		self.next_application = next_application
+
 	def __call__(self, environ, start_response):
 		"""Run the WSGI application."""
 		path_info = environ.get('PATH_INFO', '')
@@ -161,6 +164,8 @@ class IntrospectorApplication(object):
 			start_response('200 OK', [('Content-Type', 'text/html')])
 			return [ template_stream.render() ]
 
+		elif self.next_application:
+			return self.next_application(environ, start_response)
 		else:
 			start_response('404 Not Found', [('Content-Type', 'text/html')])
 			return [ "404 Not Found" ]
