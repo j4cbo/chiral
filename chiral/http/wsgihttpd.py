@@ -5,6 +5,8 @@ Chiral HTTP server supporting WSGI
 from chiral.inet import tcp
 from cStringIO import StringIO
 
+from paste.util.quoting import html_quote
+
 import socket
 import sys
 import traceback
@@ -136,7 +138,7 @@ class HTTPConnection(tcp.TCPConnection):
 				postdata = yield self.read_exactly(int(environ["CONTENT_LENGTH"]))
 				environ["wsgi.input"] = StringIO(postdata)
 
-			# Determine if we may do a keep-alive. This
+			# Determine if we may do a keep-alive.
 			connection_header = environ.get("HTTP_CONNECTION", "").lower()
 			should_keep_alive = (
 				(protocol == "HTTP/1.1" and "close" not in connection_header) or
@@ -171,7 +173,7 @@ class HTTPConnection(tcp.TCPConnection):
 			try:
 				result = self.server.application(environ, start_response)
 			except Exception:
-				exc_formatted = "<pre>%s</pre>" % traceback.format_exc()
+				exc_formatted = "<pre>%s</pre>" % html_quote(traceback.format_exc())
 				yield self.send_error("500 Internal Server Error", exc_formatted)
 
 				# Close if necessary
