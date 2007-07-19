@@ -349,17 +349,19 @@ class Tasklet(object):
 
 	@ivar state: current execution state of the tasklet: one of the STATE_* contants.
 
+	@cvar STATE_UNSTARTED: the tasklet has not been started yet
 	@cvar STATE_RUNNING: the tasklet function is currently executing code
 	@cvar STATE_SUSPENDED: the tasklet function is currently waiting for an event
 	@cvar STATE_MSGSEND: the tasklet function is currently sending a message
 	@cvar STATE_COMPLETED: the tasklet function has ended
+	@cvar STATE_FAILED: the tasklet function failed with an exception
 	'''
 
-	STATE_RUNNING, STATE_SUSPENDED, STATE_MSGSEND, STATE_COMPLETED, STATE_FAILED = range(5)
+	STATE_UNSTARTED, STATE_RUNNING, STATE_SUSPENDED, STATE_MSGSEND, STATE_COMPLETED, STATE_FAILED = range(6)
 
-	state_names = "running", "suspended", "msgsend", "completed", "failed"
+	state_names = "unstarted", "running", "suspended", "msgsend", "completed", "failed"
 
-	def __init__(self, gen, default_callback = None):
+	def __init__(self, gen, default_callback = None, autostart = True):
 		'''
 		Launch a generator tasklet.
 
@@ -378,7 +380,10 @@ class Tasklet(object):
 		self.wait_condition = None
 		self._message_queue = []
 		self._message_actions = {}
-		self.state = Tasklet.STATE_SUSPENDED
+		if autostart:
+			self.state = Tasklet.STATE_SUSPENDED
+		else:
+			self.state = Tasklet.STATE_UNSTARTED
 		self.result = None
 
 		_TASKLETS[id(self)] = self
@@ -392,6 +397,23 @@ class Tasklet(object):
 		stats.increment("chiral.core.tasklet.%s.instances" % self._gen_name)
 
 		# Start the generator
+		if autostart:
+			self._next_round(None, None)
+
+	def start(self, force=True):
+		"""Start the tasklet. Must have been initialized with autostart=False.
+
+		@param force: If force is True, the default, then the tasklet must have
+		been initialized with autostart=False and not have been started yet.
+		If force is False, this method will do nothing if the task is already running.
+		"""
+
+		if not force and self.state != Tasklet.STATE_UNSTARTED:
+			return
+
+		assert self.state == Tasklet.STATE_UNSTARTED
+
+		self.state = Tasklet.STATE_SUSPENDED
 		self._next_round(None, None)
 
 	def get_message_actions(self):

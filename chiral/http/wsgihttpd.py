@@ -82,14 +82,13 @@ class HTTPConnection(tcp.TCPConnection):
 			def set_tasklet(tlet):
 				"""
 				Tell the HTTP response to not close until Tasklet has completed.
-				Returns the HTTPConnection of the current request.
 				"""
 				waiting_tasklet[:] = [ tlet ]
-				return self
 
 			# Prepare WSGI environment
 			environ = {
 				'chiral.http.set_tasklet': set_tasklet,
+				'chiral.http.connection': self,
 				'wsgi.version': (1, 0),
 				'wsgi.url_scheme': 'http',
 				'wsgi.input': '',
@@ -224,14 +223,16 @@ class HTTPConnection(tcp.TCPConnection):
 					response.headers["Connection"] = "close"
 				yield self.send(response.render_headers())
 
-			# Call any close handler on the WSGI app's result
-			if hasattr(result, 'close'):
-				result.close()
-
 			# If set_tasklet has been set, waiting_tasklet is a Tasklet that will
 			# complete once the response is done.
 			if waiting_tasklet:
-				yield waiting_tasklet[0](self)
+				tlet, = waiting_tasklet
+				tlet.start(force=False)
+				yield tlet
+
+			# Call any close handler on the WSGI app's result
+			if hasattr(result, 'close'):
+				result.close()
 
 			# Close if necessary
 			if not should_keep_alive:
