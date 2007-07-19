@@ -172,6 +172,40 @@ class HTTPConnection(tcp.TCPConnection):
 			# Invoke the application.
 			try:
 				result = self.server.application(environ, start_response)
+
+				# If it returned an iterable of length 1, then our Content-Length
+				# is that of the first result. Otherwise, we'll close the connection
+				# to indicate completion.
+				try:
+					if len(result) == 1 and not waiting_tasklet:
+						response.headers["Content-Length"] = len(result[0])
+					else:
+						should_keep_alive = False
+				except TypeError:
+					should_keep_alive = False
+
+				headers_sent = False
+
+				# Iterate through the result chunks provided by the application.
+				for data in result:
+					# Ignore empty chunks
+					if not data:
+						continue
+
+					# Sending the headers is delayed until the first actual
+					# data chunk comes back.
+					if not headers_sent:
+						headers_sent = True
+						if should_keep_alive:
+							response.headers["Connection"] = "keep-alive"
+						else:
+							response.headers["Connection"] = "close"
+
+						yield self.send(response.render_headers() + data)
+
+					else:
+						yield self.send(data)
+
 			except Exception:
 				exc_formatted = "<pre>%s</pre>" % html_quote(traceback.format_exc())
 				yield self.send_error("500 Internal Server Error", exc_formatted)
@@ -181,38 +215,6 @@ class HTTPConnection(tcp.TCPConnection):
 					self.close()
 					break
 				continue
-
-			# If it returned an iterable of length 1, then our Content-Length
-			# is that of the first result. Otherwise, we'll close the connection
-			# to indicate completion.
-			try:
-				if len(result) == 1 and not waiting_tasklet:
-					response.headers["Content-Length"] = len(result[0])
-				else:
-					should_keep_alive = False
-			except TypeError:
-				should_keep_alive = False
-
-			headers_sent = False
-
-			# Iterate through the result chunks provided by the application.
-			for data in result:
-				# Ignore empty chunks
-				if not data:
-					continue
-
-				# Sending the headers is delayed until the first actual
-				# data chunk comes back.
-				if not headers_sent:
-					headers_sent = True
-					if should_keep_alive:
-						response.headers["Connection"] = "keep-alive"
-					else:
-						response.headers["Connection"] = "close"
-					yield self.send(response.render_headers() + data)
-
-				else:
-					yield self.send(data)
 
 			# If no data at all was returned, the headers won't have been sent yet.
 			if not headers_sent:
