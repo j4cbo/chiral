@@ -219,7 +219,7 @@ class EpollLooper(Looper):
 			return False
 
 		try:
-			events = epoll.epoll_wait(self.epoll_fd, 10, delay)
+			events = epoll.epoll_wait(self.epoll_fd, 10, int(delay))
 		except KeyboardInterrupt:
 			# Just return.
 			return False

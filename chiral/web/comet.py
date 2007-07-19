@@ -10,7 +10,7 @@ class CometClock(object):
 	def comet_tasklet(self, connection):
 		curtime = time.time()
 		while True:
-			yield connection.send("<script>f('%s')</script>\n" % (str(datetime.datetime.now()), ))
+			yield connection.send("<p>%s</p>\n" % (str(datetime.datetime.now()), ))
 			curtime += 1
 			yield self.looper.schedule(callbacktime = curtime)
 
@@ -24,11 +24,14 @@ class CometClock(object):
 <html>
 <head>
 <title>Test</title>
-<script>function f(s) { document.getElementById("t").innerHTML = s }</script>
+<style type="text/css">
+#clockouter { position: relative; }
+#clockouter p { position: absolute; background: white; padding: 10px 10px 10px 0; }
+</style>
 </head>
 <body>
-<h1>Hello world!</h1>
-<h2 id="t">Loading...</h2>
+<h1>Clock</h1>
+<div id="clockouter">
 """
 			]
 		else:

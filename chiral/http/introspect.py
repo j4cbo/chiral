@@ -12,7 +12,7 @@ _CHIRAL_RELOADABLE = True
 INTROSPECTOR_ROOT_TEMPLATE = """
 <html xmlns:py="http://genshi.edgewall.org/">
  <head>
-  <title>Chiral Inspector</title>
+  <title>Chiral Introspector</title>
   <style type="text/css">
    form {
     display: inline;
