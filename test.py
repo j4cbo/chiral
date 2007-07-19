@@ -1,16 +1,18 @@
 #/usr/bin/env python2.5
 
-print "Loading..."
+print "Loading modules..."
 
-from chiral.inet import netcore
-from chiral.core import stats, tasklet
+from chiral.core import stats
+from chiral.inet import reactor
+
 from chiral.http.wsgihttpd import HTTPServer
 from chiral.shell import ChiralShellServer
+
 from paste.pony import PonyMiddleware
 from chiral.http.introspect import IntrospectorApplication
 from chiral.web.comet import CometClock
 
-c = netcore.EpollLooper()
+print "Initializing..."
 
 def app(environ, start_response):
 	"""Simplest possible application object"""
@@ -20,15 +22,16 @@ def app(environ, start_response):
 
 
 HTTPServer(
-	c,
-	bind_addr = ('', 8082),
-	application = PonyMiddleware(IntrospectorApplication(CometClock(c)))
+	bind_addr = ('', 8081),
+	application = PonyMiddleware(IntrospectorApplication(CometClock()))
 )
 
-ChiralShellServer(c, bind_addr = ('', 9123))
+ChiralShellServer(
+	bind_addr = ('', 9123)
+)
 
 print "Running..."
 
-c.run()
+reactor.run()
 
 stats.dump()

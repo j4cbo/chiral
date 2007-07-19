@@ -240,6 +240,6 @@ class HTTPConnection(tcp.TCPConnection):
 class HTTPServer(tcp.TCPServer):
 	"""An HTTP server, based on chiral.inet.tcp.TCPServer."""
 	connection_class = HTTPConnection
-	def __init__(self, looper, bind_addr = ('', 80), application=None):
+	def __init__(self, bind_addr = ('', 80), application=None):
 		self.application = application
-		tcp.TCPServer.__init__(self, looper, bind_addr)
+		tcp.TCPServer.__init__(self, bind_addr)

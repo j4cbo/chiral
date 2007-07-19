@@ -8,9 +8,9 @@ import select
 import traceback
 import weakref
 
-class Looper(object):
+class Reactor(object):
 	"""
-	Base class for Looper objects.
+	Base class for Reactor objects.
 	"""
 
 	def __init__(self):
@@ -19,7 +19,7 @@ class Looper(object):
 		self._close_list = weakref.WeakValueDictionary()
 
 	def close_on_exit(self, sock):
-		"""Add sock to a list of sockets to be closed when the looper terminates."""
+		"""Add sock to a list of sockets to be closed when the reactor terminates."""
 		self._close_list[id(sock)] = sock
 
 	def _handle_scheduled_events(self):
@@ -114,11 +114,11 @@ class Looper(object):
 			return None
 
 
-class SelectLooper(Looper):
-	"""Looper using select()"""
+class SelectReactor(Reactor):
+	"""Reactor using select()"""
 
 	def __init__(self):
-		Looper.__init__(self)
+		Reactor.__init__(self)
 		self._read_sockets = {}
 		self._write_sockets = {}
 
@@ -181,13 +181,13 @@ class SelectLooper(Looper):
 		return True
 
 
-class EpollLooper(Looper):
+class EpollReactor(Reactor):
 	"""
-	Looper using epoll()
+	Reactor using epoll()
 	"""
 
 	def __init__(self, default_size = 10):
-		Looper.__init__(self)
+		Reactor.__init__(self)
 
 		self.epoll_fd = epoll.epoll_create(default_size)
 
@@ -244,8 +244,10 @@ class EpollLooper(Looper):
 
 		return True
 
-# Attempt to import epoll. If it's not available, forget about EpollLooper.
+# Attempt to import epoll. If it's not available, forget about EpollReactor.
 try:
 	import epoll
+	DefaultReactor = EpollReactor
 except ImportError:
-	del EpollLooper
+	del EpollReactor
+	DefaultReactor = SelectReactor

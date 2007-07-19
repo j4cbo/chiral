@@ -1,18 +1,16 @@
+from chiral.inet import reactor
 import datetime
 import time
 
 _CHIRAL_RELOADABLE = True
 
 class CometClock(object):
-	def __init__(self, looper):
-		self.looper = looper
-
 	def comet_tasklet(self, connection):
 		curtime = time.time()
 		while True:
 			yield connection.send("<p>%s</p>\n" % (str(datetime.datetime.now()), ))
 			curtime += 1
-			yield self.looper.schedule(callbacktime = curtime)
+			yield reactor.schedule(callbacktime = curtime)
 
 	def __call__(self, environ, start_response):
 		path_info = environ.get('PATH_INFO', '')

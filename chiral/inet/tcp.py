@@ -1,6 +1,7 @@
 """TCP connection handling classes."""
 
 from chiral.core import tasklet
+from chiral.inet import reactor
 import sys
 import socket
 import errno
@@ -191,7 +192,7 @@ class TCPConnection(tasklet.Tasklet):
 		"""
 		return self._async_socket_operation(
 			self.client_sock.recv,
-			self.server.looper.wait_for_readable,
+			reactor.wait_for_readable,
 			buflen,
 			try_now
 		)
@@ -203,7 +204,7 @@ class TCPConnection(tasklet.Tasklet):
 		"""
 		return self._async_socket_operation(
 			self.client_sock.send,
-			self.server.looper.wait_for_writeable,
+			reactor.wait_for_writeable,
 			data,
 			try_now
 		)
@@ -231,8 +232,7 @@ class TCPServer(tasklet.Tasklet):
 
 	connection_class = TCPConnection
 
-	def __init__(self, looper, bind_addr = ('', 80)):
-		self.looper = looper
+	def __init__(self, bind_addr = ('', 80)):
 		self.bind_addr = bind_addr
 		self.connections = weakref.WeakValueDictionary()
 
@@ -262,7 +262,7 @@ class TCPServer(tasklet.Tasklet):
 						print "Error in accept(): %s" % exc
 
 					callback = tasklet.WaitForCallback()
-					self.looper.wait_for_readable(self.master_socket, callback)
+					reactor.wait_for_readable(self.master_socket, callback)
 					yield callback
 				else:
 					break
