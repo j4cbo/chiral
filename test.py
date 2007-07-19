@@ -7,10 +7,14 @@ from chiral.inet import reactor
 
 from chiral.http.wsgihttpd import HTTPServer
 from chiral.shell import ChiralShellServer
+from paste.urlmap import URLMap
+from paste.httpexceptions import HTTPNotFound
 
 from paste.pony import PonyMiddleware
 from chiral.http.introspect import IntrospectorApplication
 from chiral.web.comet import CometClock
+
+
 
 print "Initializing..."
 
@@ -20,10 +24,16 @@ def app(environ, start_response):
 	start_response('200 OK', [('Content-Type', 'text/html')])
 	return ['Hello world!\n']
 
+application = URLMap()
+application.update({
+	"/pony": PonyMiddleware(HTTPNotFound()),
+	"/introspector": IntrospectorApplication(),
+	"/": CometClock()
+})
 
 HTTPServer(
 	bind_addr = ('', 8081),
-	application = PonyMiddleware(IntrospectorApplication(CometClock()))
+	application = application
 )
 
 ChiralShellServer(

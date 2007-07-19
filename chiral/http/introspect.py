@@ -36,7 +36,7 @@ INTROSPECTOR_ROOT_TEMPLATE = """
   <p>${len(list(tlet for tlet in tasklet._TASKLETS.valuerefs() if tlet))} tasklets.</p>
   <ul>
    <li py:for="tlet in tasklet._TASKLETS.itervalues()">
-    <a href="${rooturl}/tasklet?id=${id(tlet)}">${repr(tlet)}</a>
+    <a href="${rooturl}tasklet?id=${id(tlet)}">${repr(tlet)}</a>
    </li>
   </ul>
 
@@ -110,9 +110,13 @@ class IntrospectorApplication(object):
 	def __call__(self, environ, start_response):
 		"""Run the WSGI application."""
 		path_info = environ.get('PATH_INFO', '')
+		url = request.construct_url(environ, with_query_string=False)
 
-		if path_info == '/introspector':
-			url = request.construct_url(environ, with_query_string=False)
+		if path_info == '':
+			start_response('302 Found', [('Location', url + '/')])
+			return [ '' ]
+
+		elif path_info == '/':
 			req = request.parse_formvars(environ)
 
 			if "action" in req and req["action"] == "reload" and "mod" in req:
@@ -145,8 +149,7 @@ class IntrospectorApplication(object):
 			start_response('200 OK', [('Content-Type', 'text/html')])
 			return [ template_stream.render() ]
 
-		elif path_info == '/introspector/tasklet':
-			url = request.construct_url(environ, with_query_string=False)
+		elif path_info == '/tasklet':
 			tletid = int(request.parse_formvars(environ)["id"])
 
 			if tletid not in tasklet._TASKLETS:

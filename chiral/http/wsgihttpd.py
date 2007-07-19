@@ -99,6 +99,7 @@ class HTTPConnection(tcp.TCPConnection):
 				'wsgi.run_once': False,
 				'REQUEST_METHOD': method,
 				'PATH_INFO': url,
+				'SCRIPT_NAME': '',
 				'SERVER_NAME': self.server.bind_addr[0],
 				'SERVER_PORT': self.server.bind_addr[1],
 				'SERVER_PROTOCOL': protocol
