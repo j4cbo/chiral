@@ -10,6 +10,7 @@ from paste.util.quoting import html_quote
 import socket
 import sys
 import traceback
+from datetime import datetime
 
 _CHIRAL_RELOADABLE = True
 
@@ -22,28 +23,31 @@ class HTTPResponse(object):
 		self.content = content
 		self.status = status
 
+		self.should_keep_alive = False
+
 	def default_error(self, status, extra_content=''):
 		"""Sets the response to show a default error message."""
 
 		self.status = status
 		self.headers["Content-Type"] = "text/html"
 
-	def render_headers(self):
+	def render_headers(self, no_content = False):
 		"""Return the response line and headers as a string."""
+
+		# If we don't have a Content-Length, don't do a keep-alive
+		if not no_content and "content-length" not in (key.lower() for key in self.headers.iterkeys()):
+			self.should_keep_alive = False
+
+		self.headers.update({
+			"Date": datetime.utcnow().strftime("%a, %d %b %Y %H:%M:%S GMT"),
+			"Connection": "keep-alive" if self.should_keep_alive else "close",
+			"Server": "chiral.web.httpd/0.0.1"
+		})
+
 		return "HTTP/1.1 %s\r\n%s\r\n\r\n" % (
 			self.status,
 			"\r\n".join(("%s: %s" % (k, v)) for k, v in self.headers.iteritems())
 		)
-
-	def write_out(self):
-		"""Write the complete response to its associated HTTPConnection."""
-
-		output = self.render_headers()
-		return self.conn.send(output)
-
-	def send(self, data):
-		"""Send data to the response's connection. Returns a WaitCondition."""
-		return self.conn.send(data)
 
 
 class HTTPConnection(tcp.TCPConnection):
@@ -69,7 +73,11 @@ class HTTPConnection(tcp.TCPConnection):
 		while True:
 			# Read the first line
 			try:
-				method, url, protocol = (yield self.read_line(delimiter="\r\n")).split(' ')
+				line = yield self.read_line(delimiter="\r\n")
+				# Ignore blank lines, as suggested by the RFC
+				if not line:
+					pass
+				method, url, protocol = line.split(' ')
 			except (tcp.ConnectionOverflowException, ValueError):
 				yield self.send_error("400 Bad Request")
 				self.close()
@@ -79,15 +87,8 @@ class HTTPConnection(tcp.TCPConnection):
 
 			waiting_tasklet = []
 
-			def set_tasklet(tlet):
-				"""
-				Tell the HTTP response to not close until Tasklet has completed.
-				"""
-				waiting_tasklet[:] = [ tlet ]
-
 			# Prepare WSGI environment
 			environ = {
-				'chiral.http.set_tasklet': set_tasklet,
 				'chiral.http.connection': self,
 				'wsgi.version': (1, 0),
 				'wsgi.url_scheme': 'http',
@@ -97,7 +98,6 @@ class HTTPConnection(tcp.TCPConnection):
 				'wsgi.multiprocess': True,
 				'wsgi.run_once': False,
 				'REQUEST_METHOD': method,
-				'PATH_INFO': url,
 				'SCRIPT_NAME': '',
 				'SERVER_NAME': self.server.bind_addr[0],
 				'SERVER_PORT': self.server.bind_addr[1],
@@ -107,46 +107,93 @@ class HTTPConnection(tcp.TCPConnection):
 			# Split query string out of URL, if present
 			url = url.split('?', 1)
 			if len(url) > 1:
-				environ["PATH_INFO"], environ["QUERY_STRING"] = url
+				url, environ["QUERY_STRING"] = url
 			else:
-				environ["PATH_INFO"], = url
+				url, = url
 
 			# Read the rest of the request header, updating the WSGI environ dict
 			# with each key/value pair
+			last_key = None
 			while True:
 				try:
 					line = yield self.read_line(delimiter="\r\n")
 					if not line:
 						break
-					name, value = line.split(":", 1)
-				except (tcp.ConnectionOverflowException, ValueError):
-					self.send_error("400 Bad Request")
+				except tcp.ConnectionOverflowException:
+					yield self.send_error("400 Bad Request")
 					self.close()
 					return
 				except (tcp.ConnectionClosedException, socket.error):
 					return
 
-				key = "HTTP_%s" % (name.upper().replace("-", "_"), )
-				environ[key] = value.strip()
+				# Allow for headers split over multiple lines.
+				if last_key and line[0] in (" ", "\t"):
+					environ[last_key] += "," + line
+					continue
+
+				if ":" not in line:
+					yield self.send_error("400 Bad Request")
+					self.close()
+					return
+
+				name, value = line.split(":", 1)
+
+				# Convert the field name to WSGI's format
+				key = "HTTP_" + name.upper().replace("-", "_")
+
+				if key in environ:
+					# RFC2616 4.2: Multiple copies of a header should be
+					# treated # as though they were separated by commas.
+					environ[key] += "," + value.strip()
+				else:
+					environ[key] = value.strip()
+
+			# Accept absolute URLs, as required by HTTP 1.1
+			if url.startswith("http://"):
+				url = url[7:]
+				if "/" in url:
+					environ["HTTP_HOST"], url = url.split("/", 1)
+				else:
+					environ["HTTP_HOST"], url = url, ""
+	
+			environ["PATH_INFO"] = url
+
+			# HTTP/1.1 requires that requests without a Host: header result in 400
+			#if protocol == "HTTP/1.1" and "HTTP_HOST" not in environ:
+			#	yield self.send_error("400 Bad Request")
+			#	continue
 
 			# WSGI requires these two headers
 			environ["CONTENT_TYPE"] = environ.get("HTTP_CONTENT_TYPE", "")
 			environ["CONTENT_LENGTH"] = environ.get("HTTP_CONTENT_LENGTH", "")
+
+			# If a 100 Continue is expected, send it now.
+			if protocol == "HTTP/1.1" and "HTTP_EXPECT" in environ and "100-continue" in environ["HTTP_EXPECT"]:
+				yield self.send("HTTP/1.1 100 Continue\r\n\r\n")
 
 			# If this is a POST request with Content-Length, read its data
 			if method == "POST" and environ["CONTENT_LENGTH"]:
 				postdata = yield self.read_exactly(int(environ["CONTENT_LENGTH"]))
 				environ["wsgi.input"] = StringIO(postdata)
 
+			# Get ready for a WSGI response
+			response = HTTPResponse(self)
+
+			def set_tasklet(tlet):
+				"""
+				Tell the HTTP response to not close until Tasklet has completed.
+				"""
+				response.should_keep_alive = False
+				waiting_tasklet[:] = [ tlet ]
+			environ['chiral.http.set_tasklet'] = set_tasklet
+
+
 			# Determine if we may do a keep-alive.
 			connection_header = environ.get("HTTP_CONNECTION", "").lower()
-			should_keep_alive = (
+			response.should_keep_alive = (
 				(protocol == "HTTP/1.1" and "close" not in connection_header) or
 				(protocol == "HTTP/1.0" and connection_header == "keep-alive")
 			)
-
-			# Get ready for a WSGI response
-			response = HTTPResponse(self)
 
 			def write(data):
 				"""Bogus write method for WSGI applications."""
@@ -172,58 +219,59 @@ class HTTPConnection(tcp.TCPConnection):
 			# Invoke the application.
 			try:
 				result = self.server.application(environ, start_response)
-
-				# If it returned an iterable of length 1, then our Content-Length
-				# is that of the first result. Otherwise, we'll close the connection
-				# to indicate completion.
-				try:
-					if len(result) == 1 and not waiting_tasklet:
-						response.headers["Content-Length"] = len(result[0])
-					else:
-						should_keep_alive = False
-				except TypeError:
-					should_keep_alive = False
-
-				headers_sent = False
-
-				# Iterate through the result chunks provided by the application.
-				for data in result:
-					# Ignore empty chunks
-					if not data:
-						continue
-
-					# Sending the headers is delayed until the first actual
-					# data chunk comes back.
-					if not headers_sent:
-						headers_sent = True
-						if should_keep_alive:
-							response.headers["Connection"] = "keep-alive"
-						else:
-							response.headers["Connection"] = "close"
-
-						yield self.send(response.render_headers() + data)
-
-					else:
-						yield self.send(data)
-
 			except Exception:
 				exc_formatted = "<pre>%s</pre>" % html_quote(traceback.format_exc())
 				yield self.send_error("500 Internal Server Error", exc_formatted)
 
 				# Close if necessary
-				if not should_keep_alive:
+				if not response.should_keep_alive:
 					self.close()
 					break
 				continue
 
+			# If the iterable has length 1, then we can determine the length
+			# of the whole result now.
+			try:
+				if len(result) == 1:
+					response.headers["Content-Length"] = len(result[0])
+			except TypeError:
+				pass
+
+			# Iterate through the result chunks provided by the application.
+			res_iter = iter(result)
+			headers_sent = False
+			while True:
+				try:
+					data = res_iter.next()
+				except StopIteration:
+					break
+				except Exception:
+					yield self.send_error(
+						"500 Internal Server Error",
+						"<pre>%s</pre>" % (
+							html_quote(traceback.format_exc()),
+						)
+					)
+					self.close()
+					return
+
+				# Ignore empty chunks
+				if not data:
+					continue
+
+				# Sending the headers is delayed until the first actual
+				# data chunk comes back.
+				if not headers_sent:
+					headers_sent = True
+					yield self.send(response.render_headers() + data)
+
+				else:
+					yield self.send(data)
+
 			# If no data at all was returned, the headers won't have been sent yet.
 			if not headers_sent:
 				headers_sent = True
-				if should_keep_alive:
-					response.headers["Connection"] = "keep-alive"
-				else:
-					response.headers["Connection"] = "close"
-				yield self.send(response.render_headers())
+				yield self.send(response.render_headers(no_content=True))
 
 			# If set_tasklet has been set, waiting_tasklet is a Tasklet that will
 			# complete once the response is done.
@@ -237,7 +285,7 @@ class HTTPConnection(tcp.TCPConnection):
 				result.close()
 
 			# Close if necessary
-			if not should_keep_alive:
+			if not response.should_keep_alive:
 				self.close()
 				break
 

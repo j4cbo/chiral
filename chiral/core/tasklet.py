@@ -25,7 +25,7 @@
 # Author(s): Gustavo J. A. M. Carneiro <gjc@inescporto.pt>
 #
 
-"""The core coroutine system.
+"""Core coroutine system
 
 Concurrency in Chiral is based on "tasklets", a simple implementation of coroutines. This
 implementation is based on that of the Kiwi framework, but heavily modified to not depend on GTK
@@ -33,16 +33,15 @@ and to make full use of the enhanced genertor features of Python 2.5.
 
 Every Tasklet is implemented as a generator. Generators are defined like functions, but when
 called, they instead produce an iterator-like object that maintains the internal state of the
-function. Calling next() on a generator runs the generator function until a C{yield} isi
+function. Calling next() on a generator runs the generator function until a C{yield} is
 encountered; the state of the function is then frozen. Importantly, as of Python 2.5, C{yield}
 is an expression, allowing new information to be passed into the generator with its send() method.
 
 As such, Tasklets add one requirement to generators: they may only yield WaitCondition objects.
 (As a shortcut, a Tasklet may also yield another Tasklet, or a generator object; this is
 equivalent to yielding a WaitForTasklet on the given tasklet or on a new Tasklet based on the
-generator. When the WaitCondition becomes ready, the Tasklet is resumed, and the value it returned
-(if any) is passed as the return value of the C{yield} expression.
-
+generator.) When the WaitCondition becomes ready, the Tasklet is resumed, and the value it
+returned (if any) is passed as the return value of the C{yield} expression.
 """
 
 import types
@@ -196,7 +195,7 @@ class WaitForTasklet(WaitCondition):
 	raised an exception, the exception will be propagated into the caller.
 	'''
 
-	#__slots__ = 'tasklet', '_id', '_callback'
+	#__slots__ = 'tasklet', '_callback'
 
 	def __init__(self, tasklet):
 		'''An object that waits for another tasklet to complete'''
@@ -216,14 +215,11 @@ class WaitForTasklet(WaitCondition):
 		self._callback = tasklet.wait_condition_fired
 #		print "ARMING: %s after %s" % (tasklet, self.tasklet)
 
-		if self._id is None:
-			self._id = self.tasklet.add_completion_callback(self._completion_cb)
+		self.tasklet.add_completion_callback(self._completion_cb)
 
 	def disarm(self):
 		'''See L{WaitCondition.disarm}'''
-		if self._id is not None:
-			self.tasklet.remove_completion_callback(self._id)
-			self._id = None
+		self.tasklet.remove_completion_callback(self._completion_cb)
 
 	def _completion_cb(self, tasklet, retval, exc_info):
 		'''Used as the completion callback when the other tasklet returns.'''
@@ -319,13 +315,13 @@ class WaitForMessages(WaitCondition):
 	def arm(self, tasklet):
 		'''Overrides WaitCondition.arm'''
 		self._tasklet = tasklet
-		tasklet.message_actions.update(self.actions)
+		tasklet._message_actions.update(self.actions)
 
 	def disarm(self):
 		'''Overrides WaitCondition.disarm'''
 		assert self._tasklet is not None
 		for name in self.actions:
-			del self._tasklet.message_actions[name]
+			del self._tasklet._message_actions[name]
 
 # Store a global list of all current tasklets. The try/except block
 # ensures that even if this module is reloaded, only one list of
@@ -415,15 +411,6 @@ class Tasklet(object):
 
 		self.state = Tasklet.STATE_SUSPENDED
 		self._next_round(None, None)
-
-	def get_message_actions(self):
-		"""Dictionary mapping message names to actions ('accept' or
-		'discard' or 'defer').  Should normally not be accessed
-		directly by the programmer.
-		"""
-		return self._message_actions
-
-	message_actions = property(get_message_actions)
 
 	def _next_round(self, next_event, next_exception):
 		"""Wake up the Tasklet and run it as long as possible."""
@@ -559,33 +546,29 @@ class Tasklet(object):
 		self._next_round(return_value, exc_info)
 
 	def add_completion_callback(self, callback):
-		'''
+		"""
 		Add a callable to be invoked when the tasklet finishes.
-		Return a connection handle that can be used in
-		remove_completion_callback()
 
-		The callback will be called like this::
+		The callback will be called like this:
 			  callback(tasklet, retval, exc_info)
 
-		where tasklet is the tasklet that finished, and retval its
-		return value (or None). If the tasklet terminated by raising
-		an exception, exc_info will contain a (type, value, traceback)
-		tuple like that returned by sys.exc_info().
+		where tasklet is the tasklet that finished, and retval its return value (or
+		None). If the tasklet terminated by raising an exception, exc_info will
+		contain a (type, value, traceback) tuple like that returned by sys.exc_info().
 
-		When a completion callback is invoked, it is automatically removed,
-		so calling L{remove_callback_callback} afterwards produces a KeyError
-		exception.
-		'''
+		"""
 		assert self.state not in (Tasklet.STATE_COMPLETED, Tasklet.STATE_FAILED)
-		#print "%s: new completion callback %s" % (self, callback)
 
-		handle = id(callback)
-		self._completion_callbacks[handle] = callback
-		return handle
+		self._completion_callbacks[id(callback)] = callback
 
-	def remove_completion_callback(self, handle):
-		'''Remove a completion callback previously added with L{add_completion_callback}'''
-		del self._completion_callbacks[handle]
+	def remove_completion_callback(self, callback):
+		"""
+		Remove a completion callback previously added with L{add_completion_callback}.
+
+		When a completion callback is invoked, it is automatically removed, so calling
+		L{remove_callback_callback} afterwards produces a KeyError exception.
+		"""
+		del self._completion_callbacks[id(callback)]
 
 	def _completed(self, return_value, return_exception=None):
 		"""Called by _next_round when the tasklet has been completed."""
