@@ -37,11 +37,10 @@ function. Calling next() on a generator runs the generator function until a C{yi
 encountered; the state of the function is then frozen. Importantly, as of Python 2.5, C{yield}
 is an expression, allowing new information to be passed into the generator with its send() method.
 
-As such, Tasklets add one requirement to generators: they may only yield WaitCondition objects.
-(As a shortcut, a Tasklet may also yield another Tasklet, or a generator object; this is
-equivalent to yielding a WaitForTasklet on the given tasklet or on a new Tasklet based on the
-generator.) When the WaitCondition becomes ready, the Tasklet is resumed, and the value it
-returned (if any) is passed as the return value of the C{yield} expression.
+Tasklets run until they yield a WaitCondition object, at which point the tasklet is suspended.
+Once the WaitCondition becomes ready, the Tasklet is resumed; the value it returned, if any, is
+passed as the return value of the C{yield} expression. If a Tasklet yields any value other than
+a WaitCondition, the value will be immediately returned as the result of C{yield}.
 """
 
 import types
@@ -76,6 +75,20 @@ def task(gen):
 
 	return new_tasklet
 
+def task_waitcondition(gen):
+	"""
+	Decorator function to create a new Tasklet with each call to the wrapped function,
+	and return a WaitCondition waiting for that tasklet.
+	"""
+
+	# Yes, we really do want to perform magic with kwargs and __doc__, etc.
+	# pylint: disable-msg=W0142,W0621
+	new_tasklet = lambda *args, **kwargs: WaitForTasklet(Tasklet(gen(*args, **kwargs)))
+
+	new_tasklet.__name__ = gen.__name__
+	new_tasklet.__doc__ = gen.__doc__
+
+	return new_tasklet
 class WaitCondition(object):
 	'''
 	Base class for all wait-able condition objects.
@@ -460,23 +473,18 @@ class Tasklet(object):
 				# If it's a WaitCondition (most common case), we can skip
 				# all the other isinstance calls.
 				pass
-			elif isinstance(gen_value, types.GeneratorType):
-				gen_value = WaitForTasklet(Tasklet(gen_value))
-			elif isinstance(gen_value, Tasklet):
-				gen_value = WaitForTasklet(gen_value)
-			elif isinstance(gen_value, Message):
-				# If the generator yielded a Message, send it, then loop again.
-				msg = gen_value
-				self.state = Tasklet.STATE_MSGSEND
-				msg.sender = self
-				msg.dest.send_message(msg)
-				# Run again, now that the message has been sent.
-				continue
+#			elif isinstance(gen_value, Message):
+#				# If the generator yielded a Message, send it, then loop again.
+#				msg = gen_value
+#				self.state = Tasklet.STATE_MSGSEND
+#				msg.sender = self
+#				msg.dest.send_message(msg)
+#				# Run again, now that the message has been sent.
+#				continue
 			else:
-				raise TypeError(
-					"yielded values must be WaitConditions,"
-					" generators, or a single Message, not %s" % (repr(gen_value),)
-				)
+				# Treat all other objects as though they were a WaitForNothing
+				next_event, next_exception = gen_value, None
+				continue
 
 			arm_result = gen_value.arm(self)
 			if arm_result:

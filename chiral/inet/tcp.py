@@ -1,6 +1,6 @@
 """TCP connection handling classes."""
 
-from chiral.core import tasklet
+from chiral.core import tasklet, stats
 from chiral.inet import reactor
 import sys
 import socket
@@ -101,7 +101,7 @@ class TCPConnection(tasklet.Tasklet):
 		# Check if the delimiter is already in the buffer.
 		if delimiter in self._buffer[:max_len]:
 			out, self._buffer = self._buffer.split(delimiter, 1)
-			return tasklet.WaitForNothing(out)
+			return out
 
 		# If not, attempt to recv()
 		try:
@@ -119,7 +119,7 @@ class TCPConnection(tasklet.Tasklet):
 		self._buffer += new_data
 		if delimiter in self._buffer[:max_len]:
 			out, self._buffer = self._buffer.split(delimiter, 1)
-			return tasklet.WaitForNothing(out)
+			return out
 
 		# No luck finding the delimiter. Make sure we haven't overflowed...
 		if len(self._buffer) > max_len:
@@ -130,6 +130,7 @@ class TCPConnection(tasklet.Tasklet):
 
 
 
+	@tasklet.task_waitcondition
 	def read_exactly(self, length, read_increment = 32768):
 		"""
 		Read and return exactly length bytes.
@@ -188,7 +189,7 @@ class TCPConnection(tasklet.Tasklet):
 			cb_func(self, self.client_sock, blocked_operation_handler)
 			return callback
 
-		return tasklet.WaitForNothing(res)
+		return res
 
 	def recv(self, buflen, try_now=True):
 		"""
@@ -223,7 +224,7 @@ class TCPConnection(tasklet.Tasklet):
 		else:
 			# Only return now if /all/ the data was written
 			if res == len(data):
-				return tasklet.WaitForNothing(None)
+				return
 			else:
 				data = data[res:]
 
@@ -248,18 +249,18 @@ class TCPConnection(tasklet.Tasklet):
 		"""
 		Send up to len bytes of data from infile, starting at offset.
 		Returns the amount actually written, which may be less than
-		all the data given. Use sendall() if all the data must be send.
+		all the data given. Use sendall() if all the data must be sent.
 		"""
 
 		if not _SENDFILE_AVAILABLE:
-			# No sendfile, so just pass this on to sendall().
+			# We don't have the sendfile() system call available, so just do the
+			# read and write ourselves.
+			# XXX: This should respect offset.
 			data = infile.read(length)
-			return self.sendall(data) 
+			return self.sendall(data)
 
 		# sendfile() is available. It takes a number of parameters, so we can't just use
 		# the _async_socket_operation helper.
-
-		# Attempt the sendfile now; only do a callback if it returns EAGAIN
 		try:
 			res = sendfile(self.client_sock.fileno(), infile.fileno(), offset, length)
 		except OSError, exc:
@@ -283,8 +284,7 @@ class TCPConnection(tasklet.Tasklet):
 				raise exc
 
 		# sendfile() worked, so we're done.
-		return tasklet.WaitForNothing(res[1])
-
+		return res[1]
 
 	def __init__(self, server, sock, addr):
 		self.server = server
