@@ -259,24 +259,24 @@ class TCPConnection(tasklet.Tasklet):
 		# sendfile() is available. It takes a number of parameters, so we can't just use
 		# the _async_socket_operation helper.
 
-		callback = tasklet.WaitForCallback("sendfile")
-
-		def blocked_operation_handler():
-			"""Callback for asynchronous operations."""
-			# Prevent pylint from complaining about "except Exception"
-			# pylint: disable-msg=W0703
-			try:
-				res = sendfile(self.client_sock.fileno(), infile.fileno(), offset, length)
-			except Exception, exc:
-				callback.throw(exc)
-			else:
-				callback(res[1])
-
 		# Attempt the sendfile now; only do a callback if it returns EAGAIN
 		try:
 			res = sendfile(self.client_sock.fileno(), infile.fileno(), offset, length)
 		except OSError, exc:
 			if exc.errno == errno.EAGAIN:
+				callback = tasklet.WaitForCallback("sendfile")
+
+				def blocked_operation_handler():
+					"""Callback for asynchronous operations."""
+					# Prevent pylint from complaining about "except Exception"
+					# pylint: disable-msg=W0703
+					try:
+						res = sendfile(self.client_sock.fileno(), infile.fileno(), offset, length)
+					except Exception, exc:
+						callback.throw(exc)
+					else:
+						callback(res[1])
+
 				reactor.wait_for_writeable(self, self.client_sock, blocked_operation_handler)
 				return callback
 			else:

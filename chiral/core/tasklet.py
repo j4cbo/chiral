@@ -123,14 +123,14 @@ class WaitForCallback(WaitCondition):
 	Returns the value that it is called with, or None.
 	'''
 
-	#__slots__ = '_callback'
+	__slots__ = '_callback', 'description'
 
 	def __init__(self, description=""):
 		'''
 		Creates a wait condition that is actually a callable object, and waits for a call to be made on it.
 		If a parameter is passed to the callable, it will be returned to the tasklet.
 		'''
-		WaitCondition.__init__(self)
+		# WaitCondition.__init__() does nothing, so skip calling it.
 		self.description = description
 		self._callback = None
 
@@ -170,13 +170,13 @@ class WaitForNothing(WaitCondition):
 	An object that causes the tasklet yielding it to resume immediately with the given value.
 	'''
 
-	#__slots__ = 'value'
+	__slots__ = 'value'
 
 	def __init__(self, value):
 		'''
 		Creates a wait condition that returns immediately.
 		'''
-		WaitCondition.__init__(self)
+		# WaitCondition.__init__() does nothing, so skip calling it.
 		self.value = value
 
 	def arm(self, tasklet): # pylint: disable-msg=W0613
@@ -199,14 +199,13 @@ class WaitForTasklet(WaitCondition):
 	raised an exception, the exception will be propagated into the caller.
 	'''
 
-	#__slots__ = 'tasklet', '_callback'
+	__slots__ = 'tasklet', '_callback'
 
 	def __init__(self, tasklet):
 		'''An object that waits for another tasklet to complete'''
 
-		WaitCondition.__init__(self)
+		# WaitCondition.__init__() does nothing, so skip calling it.
 		self.tasklet = tasklet
-		self._id = None
 		self._callback = None
 
 	def arm(self, tasklet):
@@ -228,8 +227,6 @@ class WaitForTasklet(WaitCondition):
 	def _completion_cb(self, tasklet, retval, exc_info):
 		'''Used as the completion callback when the other tasklet returns.'''
 		assert tasklet is self.tasklet
-
-		self._id = None
 
 		self._callback(self, retval, exc_info)
 
