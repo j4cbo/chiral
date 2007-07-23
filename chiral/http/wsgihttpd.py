@@ -65,7 +65,7 @@ class HTTPConnection(tcp.TCPConnection):
 
 		resp.headers["Content-Length"] = len(content)
 
-		return self.send(resp.render_headers() + content)
+		return self.sendall(resp.render_headers() + content)
 
 	def handler(self):
 		"""The main request processing loop."""
@@ -169,7 +169,7 @@ class HTTPConnection(tcp.TCPConnection):
 
 			# If a 100 Continue is expected, send it now.
 			if protocol == "HTTP/1.1" and "HTTP_EXPECT" in environ and "100-continue" in environ["HTTP_EXPECT"]:
-				yield self.send("HTTP/1.1 100 Continue\r\n\r\n")
+				yield self.sendall("HTTP/1.1 100 Continue\r\n\r\n")
 
 			# If this is a POST request with Content-Length, read its data
 			if method == "POST" and environ["CONTENT_LENGTH"]:
@@ -263,15 +263,15 @@ class HTTPConnection(tcp.TCPConnection):
 				# data chunk comes back.
 				if not headers_sent:
 					headers_sent = True
-					yield self.send(response.render_headers() + data)
+					yield self.sendall(response.render_headers() + data)
 
 				else:
-					yield self.send(data)
+					yield self.sendall(data)
 
 			# If no data at all was returned, the headers won't have been sent yet.
 			if not headers_sent:
 				headers_sent = True
-				yield self.send(response.render_headers(no_content=True))
+				yield self.sendall(response.render_headers(no_content=True))
 
 			# If set_tasklet has been set, waiting_tasklet is a Tasklet that will
 			# complete once the response is done.

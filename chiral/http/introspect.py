@@ -2,6 +2,7 @@ import sys
 import gc
 
 from chiral.core import xreload, tasklet
+from chiral.inet import reactor
 
 from paste import request
 
@@ -35,9 +36,15 @@ INTROSPECTOR_ROOT_TEMPLATE = """
   <h2>Tasklets</h2>
   <p>${len(list(tlet for tlet in tasklet._TASKLETS.valuerefs() if tlet))} tasklets.</p>
   <ul>
-   <li py:for="tlet in tasklet._TASKLETS.itervalues()">
+   <li py:for="tlet in tasklet._TASKLETS.values()">
     <a href="${rooturl}tasklet?id=${id(tlet)}">${repr(tlet)}</a>
    </li>
+  </ul>
+
+  <h2>Reactor</h2>
+  <p>Applications:</p>
+  <ul>
+   <li py:for="app in reactor.applications">${repr(app)}</li>
   </ul>
 
   <h2>Modules</h2>
@@ -45,14 +52,14 @@ INTROSPECTOR_ROOT_TEMPLATE = """
    <li py:for="mod, modname in mod_list">
     <form method="post" action="${rooturl}">
      <input type="hidden" name="mod" value="${modname}"/>
-     <b>${modname}</b>: ${repr(mod)}
-     <p py:if="hasattr(mod, '_CHIRAL_RELOADABLE')">
+     <b>${modname}</b>: ${mod.__file__}
+     <span py:if="hasattr(mod, '_CHIRAL_RELOADABLE')">
       <input type="hidden" name="action" value="reload"/>
       <input type="submit" value="Reload Now"/>
-     </p>
-     <p py:if="hasattr(mod, '__chiral_reload_count__')">
+     </span>
+     <span py:if="hasattr(mod, '__chiral_reload_count__')">
       Reload count: ${mod.__chiral_reload_count__}
-     </p>
+     </span>
     </form>
    </li>
 
@@ -143,6 +150,7 @@ class IntrospectorApplication(object):
 				gc = gc,
 				gc_collected = gc_collected,
 				tasklet = tasklet,
+				reactor = reactor,
 				mod_list = mod_list
 			)
 

@@ -53,16 +53,16 @@ class CometPage(tasklet.Tasklet):
 	def send_chunk(self, data, content_type=None):
 		print "sending %s" % (data, )
 		if self.method == self.METHOD_CHUNKED:
-			return self.http_connection.send("%s%s" % (data, self.delimiter))
+			return self.http_connection.sendall("%s%s" % (data, self.delimiter))
 		elif self.method == self.METHOD_JS:
-			return self.http_connection.send("%s(%s)" % (self.jsmethod, data))
+			return self.http_connection.sendall("%s(%s)" % (self.jsmethod, data))
 		elif self.method == self.METHOD_MXMR:
 			data = str(data)
 			message = "Content-type: %s\r\n\r\n%s\r\n--ChiralMXMRBoundary\r\n" % (
 				content_type or self.content_type,
 				data
 			)
-			return self.http_connection.send(message)
+			return self.http_connection.sendall(message)
 
 
 class CometClockPage(CometPage):
@@ -71,7 +71,7 @@ class CometClockPage(CometPage):
 		while True:
 			yield self.send_chunk("<html><body><h1>Clock Test</h1><p>%s</p></body></html>" % datetime.datetime.now(), "text/html")
 			curtime += 1
-			yield reactor.schedule(callbacktime = curtime)
+			yield reactor.schedule(self, callbacktime = curtime)
 
 
 class CometClock(object):

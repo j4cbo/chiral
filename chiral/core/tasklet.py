@@ -125,12 +125,13 @@ class WaitForCallback(WaitCondition):
 
 	#__slots__ = '_callback'
 
-	def __init__(self):
+	def __init__(self, description=""):
 		'''
 		Creates a wait condition that is actually a callable object, and waits for a call to be made on it.
 		If a parameter is passed to the callable, it will be returned to the tasklet.
 		'''
 		WaitCondition.__init__(self)
+		self.description = description
 		self._callback = None
 
 	def arm(self, tasklet):
@@ -158,7 +159,10 @@ class WaitForCallback(WaitCondition):
 		return retval
 
 	def __repr__(self):
-		return "<WaitForCallback>"
+		if self.description:
+			return "<WaitForCallback %s>" % (self.description, )
+		else:
+			return "<WaitForCallback>"
 
 
 class WaitForNothing(WaitCondition):

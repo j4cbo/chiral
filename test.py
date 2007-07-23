@@ -13,21 +13,17 @@ from paste.httpexceptions import HTTPNotFound
 from paste.pony import PonyMiddleware
 from chiral.http.introspect import IntrospectorApplication
 from chiral.web.comet import CometClock
+from chiral.web.servers import StaticFileServer
 
 
 
 print "Initializing..."
 
-def app(environ, start_response):
-	"""Simplest possible application object"""
-	print repr(environ)
-	start_response('200 OK', [('Content-Type', 'text/html')])
-	return ['Hello world!\n']
-
 application = URLMap()
 application.update({
 	"/pony": PonyMiddleware(HTTPNotFound()),
 	"/introspector": IntrospectorApplication(),
+	"/home": StaticFileServer("/home/jacob"),
 	"/": CometClock()
 })
 

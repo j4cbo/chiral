@@ -151,7 +151,7 @@ class TCPConnection(tasklet.Tasklet):
 	def _async_socket_operation(self, socket_op, cb_func, parameter, try_now):
 		"""Helper function for asynchronous operations."""
 
-		callback = tasklet.WaitForCallback()
+		callback = tasklet.WaitForCallback(cb_func)
 
 		def blocked_operation_handler():
 			"""Callback for asynchronous operations."""
@@ -171,7 +171,7 @@ class TCPConnection(tasklet.Tasklet):
 				res = socket_op(parameter)
 			except socket.error, exc:
 				if exc[0] == errno.EAGAIN:
-					cb_func(self.client_sock, blocked_operation_handler)
+					cb_func(self, self.client_sock, blocked_operation_handler)
 					return callback
 				else:
 					raise exc
@@ -179,7 +179,7 @@ class TCPConnection(tasklet.Tasklet):
 			# Don't bother. (try_now is set False by functions like read_line,
 			# which attempt the low-level operations themselves first to avoid
 			# creating Tasklets unnecessarily.)
-			cb_func(self.client_sock, blocked_operation_handler)
+			cb_func(self, self.client_sock, blocked_operation_handler)
 			return callback
 
 		return tasklet.WaitForNothing(res)
@@ -197,17 +197,45 @@ class TCPConnection(tasklet.Tasklet):
 			try_now
 		)
 
-	def send(self, data, try_now=True):
+	def _sendall_tasklet(self, data):
+		"""Helper tasklet created by sendall if not all data could be sent."""
+		while data:
+			res = yield self.send(data)
+			data = data[res:]
+
+	def sendall(self, data):
 		"""
 		Send data. Returns a Callback, which fires once the data has been sent.
-		Set try_now to False if a low-level recv() has already been attempted.
 		"""
-		return self._async_socket_operation(
-			self.client_sock.send,
-			reactor.wait_for_writeable,
-			data,
-			try_now
-		)
+
+		# Try writing the data.
+		try:
+			res = self.client_sock.send(data)
+		except socket.error, exc:
+			if exc[0] != errno.EAGAIN:
+				raise exc
+		else:
+			# Only return now if /all/ the data was written
+			if res == len(data):
+				return tasklet.WaitForNothing(None)
+			else:
+				data = data[res:]
+
+		# There's still more data to be sent, so hand things off to the tasklet.
+		return tasklet.WaitForTasklet(tasklet.Tasklet(self._sendall_tasklet(data)))
+
+	def send(self, data, try_now=True):
+		"""
+		Send data. Returns a Callback, which fires once some of the data has sent;
+		the callback returns the amount actually written, which may be less than
+		all the data given. Use sendall() if all the data must be send.
+                """
+                return self._async_socket_operation(
+                        self.client_sock.send,
+                        reactor.wait_for_writeable,
+                        data,
+                        try_now
+                )
 
 	def __init__(self, server, sock, addr):
 		self.server = server
@@ -218,7 +246,7 @@ class TCPConnection(tasklet.Tasklet):
 		self._buffer = ""
 
 		tasklet.Tasklet.__init__(self, self.handler())
-		self.add_completion_callback(self.close)
+		#self.add_completion_callback(self.close)
 
 class TCPServer(tasklet.Tasklet):
 	"""
@@ -261,8 +289,8 @@ class TCPServer(tasklet.Tasklet):
 					if exc[0] != errno.EAGAIN:
 						print "Error in accept(): %s" % exc
 
-					callback = tasklet.WaitForCallback()
-					reactor.wait_for_readable(self.master_socket, callback)
+					callback = tasklet.WaitForCallback("master readable")
+					reactor.wait_for_readable(self, self.master_socket, callback)
 					yield callback
 				else:
 					break
