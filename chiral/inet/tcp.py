@@ -10,6 +10,12 @@ import weakref
 if sys.version_info[:2] < (2, 5):
 	raise RuntimeError("chiral.inet.tcp requires Python 2.5 for generator expressions.")
 
+try:
+	from sendfile import sendfile
+	_SENDFILE_AVAILABLE = True
+except ImportError:
+	_SENDFILE_AVAILABLE = False
+
 class ConnectionOverflowException(Exception):
 	"""Indicates that an excessive amount of data was received without line terminators."""
 	pass
@@ -124,7 +130,7 @@ class TCPConnection(tasklet.Tasklet):
 
 
 
-	def read_exactly(self, length, read_increment = 4096):
+	def read_exactly(self, length, read_increment = 32768):
 		"""
 		Read and return exactly length bytes.
 
@@ -224,18 +230,61 @@ class TCPConnection(tasklet.Tasklet):
 		# There's still more data to be sent, so hand things off to the tasklet.
 		return tasklet.WaitForTasklet(tasklet.Tasklet(self._sendall_tasklet(data)))
 
+
 	def send(self, data, try_now=True):
 		"""
 		Send data. Returns a Callback, which fires once some of the data has sent;
 		the callback returns the amount actually written, which may be less than
 		all the data given. Use sendall() if all the data must be send.
-                """
-                return self._async_socket_operation(
-                        self.client_sock.send,
-                        reactor.wait_for_writeable,
-                        data,
-                        try_now
-                )
+		"""
+		return self._async_socket_operation(
+			self.client_sock.send,
+			reactor.wait_for_writeable,
+			data,
+			try_now
+		)
+
+	def sendfile(self, infile, offset, length):
+		"""
+		Send up to len bytes of data from infile, starting at offset.
+		Returns the amount actually written, which may be less than
+		all the data given. Use sendall() if all the data must be send.
+		"""
+
+		if not _SENDFILE_AVAILABLE:
+			# No sendfile, so just pass this on to sendall().
+			data = infile.read(length)
+			return self.sendall(data) 
+
+		# sendfile() is available. It takes a number of parameters, so we can't just use
+		# the _async_socket_operation helper.
+
+		callback = tasklet.WaitForCallback("sendfile")
+
+		def blocked_operation_handler():
+			"""Callback for asynchronous operations."""
+			# Prevent pylint from complaining about "except Exception"
+			# pylint: disable-msg=W0703
+			try:
+				res = sendfile(self.client_sock.fileno(), infile.fileno(), offset, length)
+			except Exception, exc:
+				callback.throw(exc)
+			else:
+				callback(res[1])
+
+		# Attempt the sendfile now; only do a callback if it returns EAGAIN
+		try:
+			res = sendfile(self.client_sock.fileno(), infile.fileno(), offset, length)
+		except OSError, exc:
+			if exc.errno == errno.EAGAIN:
+				reactor.wait_for_writeable(self, self.client_sock, blocked_operation_handler)
+				return callback
+			else:
+				raise exc
+
+		# sendfile() worked, so we're done.
+		return tasklet.WaitForNothing(res[1])
+
 
 	def __init__(self, server, sock, addr):
 		self.server = server

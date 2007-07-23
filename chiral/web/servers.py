@@ -22,8 +22,7 @@ class StaticFileServer(object):
 		for item in path_components:
 			if item == "..":
 				start_response("403 Forbidden", [])
-				yield "<html><head><title>403 Forbidden</title></head><body><h1>403 Forbidden</h1></body></html>"
-				return
+				return [ "<html><head><title>403 Forbidden</title></head><body><h1>403 Forbidden</h1></body></html>" ]
 		filename = os.path.join(self.path, *path_components)
 
 		try:
@@ -31,14 +30,13 @@ class StaticFileServer(object):
 		except OSError, exc:
 			if exc.errno == errno.ENOENT:
 				start_response("404 Not Found", [])
-				yield "<html><head><title>404 Not Found</title></head><body><h1>404 Not Found</h1></body></html>"
-				return
+				return [ "<html><head><title>404 Not Found</title></head><body><h1>404 Not Found</h1></body></html>" ]
 			else:
 				raise exc
 
 		if IF_MODIFIED_SINCE.parse(environ) >= file_stats.st_mtime:
 			start_response("304 Not Modified", [])
-			return
+			return [ "" ]
 
 		try:
 			rfile = file(filename)
@@ -46,8 +44,7 @@ class StaticFileServer(object):
 			# We don't support directory listings.
 			if exc.errno in (errno.EACCES, errno.EISDIR):
 				start_response("403 Forbidden", [])
-				yield "<html><head><title>403 Forbidden</title></head><body><h1>403 Forbidden</h1></body></html>"
-				return
+				return [ "<html><head><title>403 Forbidden</title></head><body><h1>403 Forbidden</h1></body></html>" ]
 			else:
 				raise exc
 
@@ -66,7 +63,15 @@ class StaticFileServer(object):
 		# Read the file and send chunks out.
 		start_response('200 OK', response_tuples)
 
-		while True:
-			chunk = rfile.read(4096)
-			if chunk == '': break
-			yield chunk
+		# Use file_wrapper if possible.
+		if 'wsgi.file_wrapper' in environ:
+			return environ['wsgi.file_wrapper'](rfile)
+		else:
+			return iter(lambda: rfile.read(4096), '')
+
+		#return rfile
+
+		#while True:
+		#	chunk = rfile.read(4096)
+		#	if chunk == '': break
+		#	yield chunk

@@ -49,6 +49,14 @@ class HTTPResponse(object):
 			"\r\n".join(("%s: %s" % (k, v)) for k, v in self.headers.iteritems())
 		)
 
+class WSGIFileWrapper(object):
+	def __init__(self, filelike, blocksize = 4096):
+		self.filelike = filelike
+		self.blocksize = blocksize
+
+	def close(self):
+		if hasattr(self.filelike, "close"):
+			self.filelike.close()
 
 class HTTPConnection(tcp.TCPConnection):
 	"""An HTTP connection."""
@@ -76,7 +84,7 @@ class HTTPConnection(tcp.TCPConnection):
 				line = yield self.read_line(delimiter="\r\n")
 				# Ignore blank lines, as suggested by the RFC
 				if not line:
-					pass
+					continue
 				method, url, protocol = line.split(' ')
 			except (tcp.ConnectionOverflowException, ValueError):
 				yield self.send_error("400 Bad Request")
@@ -94,6 +102,7 @@ class HTTPConnection(tcp.TCPConnection):
 				'wsgi.url_scheme': 'http',
 				'wsgi.input': '',
 				'wsgi.errors': sys.stderr,
+				'wsgi.file_wrapper': WSGIFileWrapper,
 				'wsgi.multithread': False,
 				'wsgi.multiprocess': True,
 				'wsgi.run_once': False,
@@ -236,6 +245,36 @@ class HTTPConnection(tcp.TCPConnection):
 					response.headers["Content-Length"] = len(result[0])
 			except TypeError:
 				pass
+
+			# Handle file wrapper
+			if isinstance(result, WSGIFileWrapper):
+
+				# Use TCP_CORK if available
+				if hasattr(socket, "TCP_CORK"):
+					self.client_sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_CORK, 1)
+
+				yield self.sendall(response.render_headers())
+
+				res = yield self.sendfile(result.filelike, 0, result.blocksize)
+
+				if hasattr(socket, "TCP_CORK"):
+					self.client_sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_CORK, 0)
+
+				offset = res
+				while res:
+					res = yield self.sendfile(result.filelike, offset, result.blocksize)
+					offset += res
+
+				# Close the file
+				result.close()
+
+				# Close if necessary
+				if not response.should_keep_alive:
+					self.close()
+					break
+
+				# And we're now done with this request.
+				continue
 
 			# Iterate through the result chunks provided by the application.
 			res_iter = iter(result)
