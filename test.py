@@ -5,24 +5,24 @@ print "Loading modules..."
 from chiral.core import stats
 from chiral.inet import reactor
 
-from chiral.http.wsgihttpd import HTTPServer
+from chiral.web.httpd import HTTPServer
 from chiral.shell import ChiralShellServer
 from paste.urlmap import URLMap
 from paste.httpexceptions import HTTPNotFound
 
+print "Loading applications..."
+
 from paste.pony import PonyMiddleware
-from chiral.http.introspect import IntrospectorApplication
+from chiral.web.introspector import Introspector
 from chiral.web.comet import CometClock
 from chiral.web.servers import StaticFileServer
-
-
 
 print "Initializing..."
 
 application = URLMap()
 application.update({
 	"/pony": PonyMiddleware(HTTPNotFound()),
-	"/introspector": IntrospectorApplication(),
+	"/introspector": Introspector(),
 	"/home": StaticFileServer("/home/jacob"),
 	"/": CometClock()
 })

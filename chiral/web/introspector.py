@@ -104,7 +104,7 @@ INTROSPECTOR_TEST_TEMPLATE = """
 </html>
 """
 
-class IntrospectorApplication(object):
+class Introspector(object):
 	"""WSGI application providing the Chiral Introspector."""
 
 	root_template = MarkupTemplate(INTROSPECTOR_ROOT_TEMPLATE)
