@@ -3,6 +3,7 @@ Chiral HTTP server supporting WSGI
 """
 
 from chiral.inet import tcp
+from chiral.core import tasklet
 from cStringIO import StringIO
 
 from paste.util.quoting import html_quote
@@ -192,7 +193,6 @@ class HTTPConnection(tcp.TCPConnection):
 				"""
 				Tell the HTTP response to not close until Tasklet has completed.
 				"""
-				response.should_keep_alive = False
 				waiting_tasklet[:] = [ tlet ]
 			environ['chiral.http.set_tasklet'] = set_tasklet
 
@@ -241,7 +241,7 @@ class HTTPConnection(tcp.TCPConnection):
 			# If the iterable has length 1, then we can determine the length
 			# of the whole result now.
 			try:
-				if len(result) == 1:
+				if len(result) == 1 and not waiting_tasklet:
 					response.headers["Content-Length"] = len(result[0])
 			except TypeError:
 				pass
@@ -269,7 +269,7 @@ class HTTPConnection(tcp.TCPConnection):
 				result.close()
 
 				# Close if necessary
-				if not response.should_keep_alive:
+				if not self.should_keep_alive:
 					self.close()
 					break
 
@@ -303,12 +303,11 @@ class HTTPConnection(tcp.TCPConnection):
 				if not headers_sent:
 					headers_sent = True
 					yield self.sendall(response.render_headers() + data)
-
 				else:
 					yield self.sendall(data)
 
 			# If no data at all was returned, the headers won't have been sent yet.
-			if not headers_sent:
+			if not headers_sent and not waiting_tasklet:
 				headers_sent = True
 				yield self.sendall(response.render_headers(no_content=True))
 
@@ -317,8 +316,27 @@ class HTTPConnection(tcp.TCPConnection):
 			if waiting_tasklet:
 				tlet, = waiting_tasklet
 				tlet.start(force=False)
-				yield tlet
+				delayed_data = yield tasklet.WaitForTasklet(tlet)
 
+				try:
+					if len(delayed_data) == 1:
+						response.headers["Content-Length"] = len(delayed_data[0])
+				except TypeError:
+					pass
+
+				# Iterate through and send any delayed data as well
+				for data in delayed_data:
+					# Ignore empty chunks
+					if not data:
+						continue
+
+					# Add the headers, if not already sent
+					if not headers_sent:
+						headers_sent = True
+						data = response.render_headers() + data
+
+					yield self.sendall(data)
+				
 			# Call any close handler on the WSGI app's result
 			if hasattr(result, 'close'):
 				result.close()

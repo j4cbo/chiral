@@ -1,8 +1,10 @@
-"""Statistics tracking for Chiral"""
+"""
+Statistics tracking
+"""
 
 try:
 	_STATS # pylint: disable-msg=W0104
-except NameError, e:
+except NameError:
 	_STATS = {}
 
 
@@ -25,3 +27,6 @@ def dump():
 	keys = sorted(_STATS.iterkeys())
 	for key in keys:
 		print "%s: %d" % (key, _STATS[key])
+
+
+__all__ = [ "increment", "dump" ]

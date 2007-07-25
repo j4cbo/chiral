@@ -7,27 +7,27 @@ namespace.
 
 Some of the many limitiations include:
 
-- Global mutable objects other than classes are simply replaced, not patched
+	- Global mutable objects other than classes are simply replaced, not patched
 
-- Code using metaclasses is not handled correctly
+	- Code using metaclasses is not handled correctly
 
-- Code creating global singletons is not handled correctly
+	- Code creating global singletons is not handled correctly
 
-- Functions and methods using decorators (other than classmethod and
-  staticmethod) is not handled correctly
+	- Functions and methods using decorators (other than classmethod and
+	  staticmethod) is not handled correctly
 
-- Renamings are not handled correctly
+	- Renamings are not handled correctly
 
-- Dependent modules are not reloaded
+	- Dependent modules are not reloaded
 
-- When a dependent module contains 'from foo import bar', and
-  reloading foo deletes foo.bar, the dependent module continues to use
-  the old foo.bar object rather than failing
+	- When a dependent module contains 'from foo import bar', and
+	  reloading foo deletes foo.bar, the dependent module continues to use
+	  the old foo.bar object rather than failing
 
-- Frozen modules and modules loaded from zip files aren't handled
-  correctly
+	- Frozen modules and modules loaded from zip files aren't handled
+	  correctly
 
-- Classes involving __slots__ are not handled correctly
+	- Classes involving __slots__ are not handled correctly
 """
 
 import imp
@@ -37,13 +37,11 @@ import types
 _CHIRAL_RELOADABLE = True
 
 def xreload(mod):
-	"""Reload a module in place, updating classes, methods and functions.
+	"""
+	Reload a module in place, updating classes, methods and functions.
 
-	Args:
-	  mod: a module object
-
-	Returns:
-	  The (updated) input object itself.
+	@parameter mod: a module object
+	@returns: The (updated) input object itself.
 	"""
 	# Get the module name, e.g. 'foo.bar.whatever'
 	modname = mod.__name__
@@ -110,12 +108,10 @@ def _update(oldobj, newobj):
 
 	If oldobj is immutable, this simply returns newobj.
 
-	Args:
-	  oldobj: the object to be updated
-	  newobj: the object used as the source for the update
+	@parameter oldobj: the object to be updated
+	@parameter newobj: the object used as the source for the update
 
-	Returns:
-	  either oldobj, updated in place, or newobj.
+	@returns: either oldobj, updated in place, or newobj.
 	"""
 	if oldobj is newobj:
 		# Probably something imported

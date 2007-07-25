@@ -16,14 +16,22 @@ from paste.pony import PonyMiddleware
 from chiral.web.introspector import Introspector
 from chiral.web.comet import CometClock
 from chiral.web.servers import StaticFileServer
+from chiral.web.framework import *
 
 print "Initializing..."
+
+@tasklet_page()
+@use_template("genshi", "chiral.web.templates.asdf")
+def asyncpagetest():
+	yield reactor.schedule(None, delay = 1)
+	raise StopIteration({ "foo": "Test Page" })
 
 application = URLMap()
 application.update({
 	"/pony": PonyMiddleware(HTTPNotFound()),
 	"/introspector": Introspector(),
 	"/home": StaticFileServer("/home/jacob"),
+	"/tp": asyncpagetest,
 	"/": CometClock()
 })
 

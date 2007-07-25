@@ -25,17 +25,18 @@
 # Author(s): Gustavo J. A. M. Carneiro <gjc@inescporto.pt>
 #
 
-"""Core coroutine system
+"""Coroutine system
 
 Concurrency in Chiral is based on "tasklets", a simple implementation of coroutines. This
-implementation is based on that of the Kiwi framework, but heavily modified to not depend on GTK
-and to make full use of the enhanced genertor features of Python 2.5.
+version derives from that of the Kiwi framework; however, it is fully standalone, whereas Kiwi
+is based around GTK. Chiral tasklets are based on the enhanced generators in Python 2.5.
 
 Every Tasklet is implemented as a generator. Generators are defined like functions, but when
 called, they instead produce an iterator-like object that maintains the internal state of the
 function. Calling next() on a generator runs the generator function until a C{yield} is
 encountered; the state of the function is then frozen. Importantly, as of Python 2.5, C{yield}
-is an expression, allowing new information to be passed into the generator with its send() method.
+is an expression, allowing new information to be passed into the generator with its C{send()}
+method.
 
 Tasklets run until they yield a WaitCondition object, at which point the tasklet is suspended.
 Once the WaitCondition becomes ready, the Tasklet is resumed; the value it returned, if any, is
@@ -90,18 +91,20 @@ def task_waitcondition(gen):
 
 	return new_tasklet
 class WaitCondition(object):
-	'''
+	"""
 	Base class for all wait-able condition objects.
 
 	WaitConditions are yielded from within the body of a tasklet, to specify what it
 	should wait for in order to receive control again.
-	'''
+	"""
 
 	def __init__(self):
-		'''Abstract base class; do not call directly.'''
+		"""Abstract base class; do not call directly."""
+		raise NotImplementedError
 
 	def arm(self, tasklet):
-		'''Prepare the wait condition to receive events.
+		"""
+		Prepare the wait condition to receive events.
 
 		If the event the WaitCondition is waiting for has already occurred, arm()
 		should return a 2-tuple (event, exception) of its result; if an exception
@@ -112,29 +115,25 @@ class WaitCondition(object):
 		L{wait_condition_fired<Tasklet.wait_condition_fired>} of the tasklet, with
 		the WaitCondition object (i.e. self) as argument. 
 
-		@parameter tasklet: the tasklet instance the wait condition is
-		  to be associated with.
-
-		@attention: this method should not normally be called directly
-		  by the programmer.
-		'''
+		Parameters:
+		- `tasklet`: The L{Tasklet} instance that the wait condition is to be
+		  associated with.
+		"""
 		raise NotImplementedError
 
 	def disarm(self):
-		'''Stop the wait condition from receiving events.
-
-		@attention: this method should not normally be called by the
-		programmer.'''
+		"""
+		Stop the wait condition from receiving events.
+		"""
 		raise NotImplementedError
 
 
-
 class WaitForCallback(WaitCondition):
-	'''
-	An object that waits until it is called.
+	"""
+	WaitCondition that is callable; fires once it is called.
 
 	Returns the value that it is called with, or None.
-	'''
+	"""
 
 	__slots__ = '_callback', 'description'
 
@@ -179,9 +178,9 @@ class WaitForCallback(WaitCondition):
 
 
 class WaitForNothing(WaitCondition):
-	'''
-	An object that causes the tasklet yielding it to resume immediately with the given value.
-	'''
+	"""
+	WaitCondition that fires immediately.
+	"""
 
 	__slots__ = 'value'
 
@@ -205,12 +204,12 @@ class WaitForNothing(WaitCondition):
 
 
 class WaitForTasklet(WaitCondition):
-	'''
-	An object that waits for another tasklet to complete.
+	"""
+	WaitCondition that fires once another tasklet to complete.
 
 	Returns the final return value, if any, of the other tasklet. If the other tasklet
 	raised an exception, the exception will be propagated into the caller.
-	'''
+	"""
 
 	__slots__ = 'tasklet', '_callback'
 
@@ -371,25 +370,22 @@ class Tasklet(object):
 
 	state_names = "unstarted", "running", "suspended", "msgsend", "completed", "failed"
 
-	def __init__(self, gen, default_callback = None, autostart = True):
+	def __init__(self, gen, default_callback = None, autostart = True, parameters = ()):
 		'''
 		Launch a generator tasklet.
 
 		@param gen: a generator object that implements the tasklet main body
-
-		If `gen` is omitted or None, L{run} should be overridden in a
-		subclass by a suitable generator function.
-
 		'''
 
 		if default_callback:
-			self._completion_callbacks = { id(default_callback): default_callback }
+			self._completion_callbacks = [ default_callback ]
 		else:
-			self._completion_callbacks = {}
+			self._completion_callbacks = []
 
 		self.wait_condition = None
 		self._message_queue = []
 		self._message_actions = {}
+		self.parameters = parameters
 		if autostart:
 			self.state = Tasklet.STATE_SUSPENDED
 		else:
@@ -558,8 +554,9 @@ class Tasklet(object):
 		"""
 		Add a callable to be invoked when the tasklet finishes.
 
-		The callback will be called like this:
-			  callback(tasklet, retval, exc_info)
+		The callback will be called like this::
+
+			callback(tasklet, retval, exc_info)
 
 		where tasklet is the tasklet that finished, and retval its return value (or
 		None). If the tasklet terminated by raising an exception, exc_info will
@@ -568,16 +565,16 @@ class Tasklet(object):
 		"""
 		assert self.state not in (Tasklet.STATE_COMPLETED, Tasklet.STATE_FAILED)
 
-		self._completion_callbacks[id(callback)] = callback
+		self._completion_callbacks.append(callback)
 
 	def remove_completion_callback(self, callback):
 		"""
 		Remove a completion callback previously added with L{add_completion_callback}.
 
 		When a completion callback is invoked, it is automatically removed, so calling
-		L{remove_callback_callback} afterwards produces a KeyError exception.
+		L{remove_completion_callback} afterwards produces a KeyError exception.
 		"""
-		del self._completion_callbacks[id(callback)]
+		self._completion_callbacks.remove(callback)
 
 	def _completed(self, return_value, return_exception=None):
 		"""Called by _next_round when the tasklet has been completed."""
@@ -589,10 +586,11 @@ class Tasklet(object):
 		self.gen = None
 		self.result = return_value, return_exception
 
-		callbacks = self._completion_callbacks.values()
-		self._completion_callbacks.clear()
+		callbacks = self._completion_callbacks
+		self._completion_callbacks = []
+
 		for callback in callbacks:
-			callback(self, return_value, return_exception)
+			callback(self, self.result[0], self.result[1])
 
 		if len(callbacks) == 0 and return_exception:
 			exc_type, exc, exc_traceback = return_exception

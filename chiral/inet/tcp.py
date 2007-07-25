@@ -1,6 +1,6 @@
 """TCP connection handling classes."""
 
-from chiral.core import tasklet, stats
+from chiral.core import tasklet
 from chiral.inet import reactor
 import sys
 import socket

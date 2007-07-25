@@ -165,12 +165,11 @@ class SelectReactor(Reactor):
 			key is that item.
 			"""
 			for key in items:
-				callback, app = event_list[key]
+				callback = event_list[key][0]
 				del event_list[key]
 
 				# Yes, we really do want to catch /all/ Exceptions
 				# pylint: disable-msg=W0703
-
 				try:
 					callback()
 				except Exception:
@@ -236,8 +235,9 @@ class EpollReactor(Reactor):
 			# Just return.
 			return False
 
-		for event_op, event_fd in events:
-			app, sock, callback, desired_events = self._sockets[event_fd]
+		for event_desc in events:
+			event_fd = event_desc[1]
+			sock, callback = self._sockets[event_fd][1:3]
 			del self._sockets[event_fd]
 
 			epoll.epoll_ctl(self.epoll_fd, epoll.EPOLL_CTL_DEL, sock.fileno(), 0)
@@ -256,6 +256,8 @@ class EpollReactor(Reactor):
 		return True
 
 # Attempt to import epoll. If it's not available, forget about EpollReactor.
+# "DefaultReactor" is still a class, not a constant.
+#pylint: disable-msg=C0103
 try:
 	import epoll
 	DefaultReactor = EpollReactor

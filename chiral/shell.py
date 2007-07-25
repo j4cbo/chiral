@@ -1,3 +1,5 @@
+"""Python shell server."""
+
 from chiral.inet import tcp
 from StringIO import StringIO
 import socket
@@ -7,12 +9,8 @@ import code
 
 _CHIRAL_RELOADABLE = True
 
-class FakeSys:
-	def __init__(self, stdout):
-		self.stdout = stdout
-		self.displayhook = lambda x: stdout.write(x)
-
 class ChiralShellConnection(tcp.TCPConnection, code.InteractiveInterpreter):
+	"""A connection to the Chiral shell."""
 
 	def displayhook(self, result):
 		print >>self.outputbuffer, result
