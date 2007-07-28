@@ -23,7 +23,7 @@ print "Initializing..."
 @tasklet_page()
 @use_template("genshi", "chiral.web.templates.asdf")
 def asyncpagetest():
-	yield reactor.schedule(None, delay = 1)
+	yield
 	raise StopIteration({ "foo": "Test Page" })
 
 application = URLMap()

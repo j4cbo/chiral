@@ -75,14 +75,9 @@ class TaskletTests(unittest.TestCase):
 		self.check_completed(tlet, 42)
 
 	def testWaitConditionNotImplemented(self):
-		"""Check that attempting to use the WaitCondition base class will fail."""
+		"""Check that attempting to instantiate the WaitCondition base class will fail."""
 
-		def tasklet_yielding_wc():
-			yield tasklet.WaitCondition()
-
-		self.assertRaises(NotImplementedError, tasklet.WaitCondition().arm, None)
-		self.assertRaises(NotImplementedError, tasklet.WaitCondition().disarm)
-		self.assertRaises(NotImplementedError, tasklet.Tasklet, tasklet_yielding_wc())
+		self.assertRaises(NotImplementedError, tasklet.WaitCondition)
 
 	def testCallback(self):
 		"""Check the WaitForCallback class."""
@@ -155,26 +150,6 @@ class TaskletTests(unittest.TestCase):
 		self.check_completed(tlet, 42)
 
 		pass
-
-	def testYieldTasklet(self):
-		"""Check handling of a Tasklet yielding another Tasklet."""
-
-		inner_tlet = tasklet.Tasklet(tasklet_gen_returning(42))
-		tlet = tasklet.Tasklet(tasklet_gen_yielding(inner_tlet))
-
-		self.check_completed(tlet, 42)
-
-	def testYieldGenerator(self):
-		"""Check handling of a Tasklet yielding a generator."""
-
-		tlet = tasklet.Tasklet(tasklet_gen_yielding(tasklet_gen_returning(42)))
-
-		self.check_completed(tlet, 42)
-
-	def testYieldBroken(self):
-		"""Check handling of a Tasklet yielding an invalid valie."""
-
-		self.assertRaises(TypeError, tasklet.Tasklet, tasklet_gen_yielding("TEST"))
 
 if __name__ == '__main__':
 	unittest.main()

@@ -1,5 +1,9 @@
 """
 Statistics tracking
+
+The statistics package keeps track of events in a simple, global dictionary. When
+increment() is called with a given key, the corresponding value is set to 1 if it is not
+already present, or incremented if it is present.
 """
 
 try:
@@ -10,7 +14,16 @@ except NameError:
 
 if __debug__:
 	def increment(key):
-		"""Increment the call count for an event."""
+		"""Increment the call count for an event.
+
+		Example::
+
+			if key in cache:
+				return cache[key]
+			else:
+				stats.increment("myapp.cache.misses")
+				return self.get(key)
+		"""
 		try:
 			_STATS[key] += 1
 		except KeyError:
@@ -28,5 +41,11 @@ def dump():
 	for key in keys:
 		print "%s: %d" % (key, _STATS[key])
 
+def retrieve():
+	"""Return a copy of the statistics dict."""
+	return _STATS.copy()
 
-__all__ = [ "increment", "dump" ]
+def clear():
+	"""Clear all statistics counters."""
+
+__all__ = [ "increment", "dump", "retrieve", "clear" ]

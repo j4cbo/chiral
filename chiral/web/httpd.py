@@ -64,9 +64,18 @@ class HTTPConnection(tcp.TCPConnection):
 
 	MAX_REQUEST_LENGTH = 8192
 
-	def send_error(self, status, extra_content = ""):
+	def send_error(self, status, resp, extra_content = ""):
 		"""Create and send an HTTPResponse for the given status code."""
-		resp = HTTPResponse(conn = self, status = status, headers = { "Content-Type": "text/html" })
+
+		if resp:
+			resp.status = status
+			resp.headers = { "Content-Type": "text/html" }
+		else:
+			resp = HTTPResponse(
+				conn = self,
+				status = status,
+				headers = { "Content-Type": "text/html" }
+			)
 
 		content = "<html><head><title>%s</title></head><body><h1>%s</h1></body>%s</html>" % (
 			status, status, extra_content
@@ -230,12 +239,13 @@ class HTTPConnection(tcp.TCPConnection):
 				result = self.server.application(environ, start_response)
 			except Exception:
 				exc_formatted = "<pre>%s</pre>" % html_quote(traceback.format_exc())
-				yield self.send_error("500 Internal Server Error", exc_formatted)
+				yield self.send_error("500 Internal Server Error", response, exc_formatted)
 
 				# Close if necessary
 				if not response.should_keep_alive:
 					self.close()
 					break
+
 				continue
 
 			# If the iterable has length 1, then we can determine the length
@@ -287,6 +297,7 @@ class HTTPConnection(tcp.TCPConnection):
 				except Exception:
 					yield self.send_error(
 						"500 Internal Server Error",
+						response,
 						"<pre>%s</pre>" % (
 							html_quote(traceback.format_exc()),
 						)

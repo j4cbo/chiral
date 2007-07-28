@@ -110,6 +110,9 @@ class CometClockPage(CometPage):
 	CometPage displaying a simple HTML clock that updates every second.
 	"""
 
+	def __init__(self, environ, start_resp):
+		CometPage.__init__(self, environ, start_resp, content_type="text/html", method=self.METHOD_MXMR)
+
 	def run(self):
 		curtime = time.time()
 		while True:
@@ -127,7 +130,7 @@ class CometClock(object):
 		path_info = environ.get('PATH_INFO', '')
 
 		if path_info == '/':
-			return CometClockPage(CometPage.METHOD_MXMR, environ, start_response)
+			return CometClockPage(environ, start_response)
 		else:
 			start_response('404 Not Found', [('Content-Type', 'text/html')])
 			return [ "404 Not Found" ]

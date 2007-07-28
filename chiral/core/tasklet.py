@@ -51,45 +51,102 @@ import weakref
 import sys
 import traceback
 
+from decorator import decorator
+
 from chiral.core import stats
 
 _CHIRAL_RELOADABLE = True
 
 if sys.version_info[:2] < (2, 5):
-	raise RuntimeError("chiral.core.callbacks requires Python 2.5 for generator expressions.") #pragma: no cover
+	raise RuntimeError("chiral.core.callbacks requires Python 2.5.") #pragma: no cover
 
 # Some of the classes here are very simple (Message, etc).
 # but for good reason. Suppress pylint's warning about insufficient public methods.
 # pylint: disable-msg=R0903
 
-def task(gen):
+def trim(docstring):
+	"""Docstring indentation removal, from PEP 257"""
+	if not docstring:
+		return ''
+
+	# Convert tabs to spaces (following the normal Python rules)
+	# and split into a list of lines:
+	lines = docstring.expandtabs().splitlines()
+	# Determine minimum indentation (first line doesn't count):
+	indent = sys.maxint
+	for line in lines[1:]:
+		stripped = line.lstrip()
+		if stripped:
+			indent = min(indent, len(line) - len(stripped))
+	# Remove indentation (first line is special):
+	trimmed = [lines[0].strip()]
+	if indent < sys.maxint:
+		for line in lines[1:]:
+			trimmed.append(line[indent:].rstrip())
+	# Strip off trailing and leading blank lines:
+	while trimmed and not trimmed[-1]:
+		trimmed.pop()
+	while trimmed and not trimmed[0]:
+		trimmed.pop(0)
+	# Return a single string:
+	return '\n'.join(trimmed)
+
+@decorator
+def task(gen, *args, **kwargs):
 	"""
 	Decorator function to create a new Tasklet with each call to the wrapped function.
 	"""
 
-	# Yes, we really do want to perform magic with kwargs and __doc__, etc.
-	# pylint: disable-msg=W0142,W0621
-	new_tasklet = lambda *args, **kwargs: Tasklet(gen(*args, **kwargs))
+	return Tasklet(gen(*args, **kwargs)) #pylint: disable-msg=W0142
 
-	new_tasklet.__name__ = gen.__name__
-	new_tasklet.__doc__ = gen.__doc__
 
-	return new_tasklet
-
-def task_waitcondition(gen):
+@decorator
+def task_waitcondition(gen, *args, **kwargs):
 	"""
 	Decorator function to create a new Tasklet with each call to the wrapped function,
 	and return a WaitCondition waiting for that tasklet.
 	"""
 
-	# Yes, we really do want to perform magic with kwargs and __doc__, etc.
-	# pylint: disable-msg=W0142,W0621
-	new_tasklet = lambda *args, **kwargs: WaitForTasklet(Tasklet(gen(*args, **kwargs)))
+	return WaitForTasklet(Tasklet(gen(*args, **kwargs))) #pylint: disable-msg=W0142
 
-	new_tasklet.__name__ = gen.__name__
-	new_tasklet.__doc__ = gen.__doc__
 
-	return new_tasklet
+@decorator
+def returns_waitcondition_decorator(func, *args, **kwargs):
+	"""Implementation of returns_waitcondition.
+
+	This is a separate function because the decorator module (@decorator) does not provide
+	for modification of the decorated function's docstring.
+	"""
+	
+	ret = func(*args, **kwargs) #pylint: disable-msg=W0142
+
+	if not isinstance(ret, WaitCondition):
+		ret = WaitForNothing(ret)
+
+	return ret
+
+
+def returns_waitcondition(func):
+	"""
+	Mark a function as returning a WaitCondition.
+
+	In optimized mode, this does not replace the function itself or modify its
+	return value. In debug mode, however, a wrapper function will be applied
+	which checks the return value. If it is not a WaitCondition, it will be
+	converted to a WaitForNothing object; this ensures that code does not attempt
+	to use the returned value directly.
+
+	Additionally, the function's docstring will be amended to indicate that its
+	return value should be expected to be a WaitCondition.
+	"""
+
+	func.__doc__ = trim(func.__doc__) + "\n\nReturns a WaitCondition."
+
+	if __debug__:
+		return returns_waitcondition_decorator(func)
+	else:
+		return func
+
 class WaitCondition(object):
 	"""
 	Base class for all wait-able condition objects.
@@ -142,7 +199,11 @@ class WaitForCallback(WaitCondition):
 		Creates a wait condition that is actually a callable object, and waits for a call to be made on it.
 		If a parameter is passed to the callable, it will be returned to the tasklet.
 		'''
+
 		# WaitCondition.__init__() does nothing, so skip calling it.
+		# pylint complains about this (as it should)
+		#pylint: disable-msg=W0231
+
 		self.description = description
 		self._callback = None
 
@@ -189,6 +250,9 @@ class WaitForNothing(WaitCondition):
 		Creates a wait condition that returns immediately.
 		'''
 		# WaitCondition.__init__() does nothing, so skip calling it.
+		# pylint complains about this (as it should)
+		#pylint: disable-msg=W0231
+
 		self.value = value
 
 	def arm(self, tasklet): # pylint: disable-msg=W0613
@@ -217,6 +281,9 @@ class WaitForTasklet(WaitCondition):
 		'''An object that waits for another tasklet to complete'''
 
 		# WaitCondition.__init__() does nothing, so skip calling it.
+		# pylint complains about this (as it should)
+		#pylint: disable-msg=W0231
+
 		self.tasklet = tasklet
 		self._callback = None
 
@@ -366,7 +433,8 @@ class Tasklet(object):
 	@cvar STATE_FAILED: the tasklet function failed with an exception
 	'''
 
-	STATE_UNSTARTED, STATE_RUNNING, STATE_SUSPENDED, STATE_MSGSEND, STATE_COMPLETED, STATE_FAILED = range(6)
+	STATE_UNSTARTED, STATE_RUNNING, STATE_SUSPENDED, \
+		STATE_MSGSEND, STATE_COMPLETED, STATE_FAILED = range(6)
 
 	state_names = "unstarted", "running", "suspended", "msgsend", "completed", "failed"
 
@@ -542,9 +610,7 @@ class Tasklet(object):
 
 
 	def wait_condition_fired(self, triggered_cond, return_value, exc_info = None):
-		"""Method that should be called when a wait condition fires"""
-#		traceback.print_stack(file=sys.stdout)
-
+		"""Method that should be called when a wait condition fires."""
 		assert triggered_cond is self.wait_condition
 		self.wait_condition = None
 
@@ -633,3 +699,12 @@ class Tasklet(object):
 			failure_info,
 			(", waiting on %s" % self.wait_condition) if self.wait_condition else ""
 		)
+
+
+__all__ = [
+	"task", "task_waitcondition", "returns_waitcondition",
+	"WaitCondition",
+	"WaitForMessages", "WaitForCallback", "WaitForTasklet", "WaitForNothing",
+	"Message",
+	"Tasklet"
+]

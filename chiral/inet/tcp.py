@@ -91,6 +91,7 @@ class TCPConnection(tasklet.Tasklet):
 				raise ConnectionOverflowException()
 
 
+	@tasklet.returns_waitcondition
 	def read_line(self, max_len = 1024, delimiter = "\n"):
 		"""
 		Read a line (delimited by any member of the "delimiters" tuple) from
@@ -130,6 +131,7 @@ class TCPConnection(tasklet.Tasklet):
 
 
 
+	@tasklet.returns_waitcondition
 	@tasklet.task_waitcondition
 	def read_exactly(self, length, read_increment = 32768):
 		"""
@@ -191,11 +193,11 @@ class TCPConnection(tasklet.Tasklet):
 
 		return res
 
+	@tasklet.returns_waitcondition
 	def recv(self, buflen, try_now=True):
 		"""
-		Read data from the socket. Returns a Callback, which will
-		fire as soon as data is available. Set try_now to False if a
-		low-level recv() has already been attempted.
+		Read data from the socket. Set try_now to False if a low-level recv() has
+		already been attempted.
 		"""
 		return self._async_socket_operation(
 			self.client_sock.recv,
@@ -210,16 +212,21 @@ class TCPConnection(tasklet.Tasklet):
 			res = yield self.send(data)
 			data = data[res:]
 
+	@tasklet.returns_waitcondition
 	def sendall(self, data):
 		"""
-		Send data. Returns a Callback, which fires once the data has been sent.
+		Send all of data to the socket. The send() method and underlying system
+		call are not guaranteed to write all the supplied data; sendall() will
+		loop if necessary until all data is written.
 		"""
 
 		# Try writing the data.
 		try:
 			res = self.client_sock.send(data)
 		except socket.error, exc:
-			if exc[0] != errno.EAGAIN:
+			if exc[0] == errno.EPIPE:
+				raise ConnectionClosedException()
+			elif exc[0] != errno.EAGAIN:
 				raise exc
 		else:
 			# Only return now if /all/ the data was written
@@ -231,12 +238,12 @@ class TCPConnection(tasklet.Tasklet):
 		# There's still more data to be sent, so hand things off to the tasklet.
 		return tasklet.WaitForTasklet(tasklet.Tasklet(self._sendall_tasklet(data)))
 
-
+	@tasklet.returns_waitcondition
 	def send(self, data, try_now=True):
 		"""
-		Send data. Returns a Callback, which fires once some of the data has sent;
-		the callback returns the amount actually written, which may be less than
-		all the data given. Use sendall() if all the data must be send.
+		Send data, and return the number of bytes actually sent. Note that the
+		send() system call does not guarantee that all of data will actually be
+		sent; in most cases, sendall() should be used.
 		"""
 		return self._async_socket_operation(
 			self.client_sock.send,
@@ -245,6 +252,7 @@ class TCPConnection(tasklet.Tasklet):
 			try_now
 		)
 
+	@tasklet.returns_waitcondition
 	def sendfile(self, infile, offset, length):
 		"""
 		Send up to len bytes of data from infile, starting at offset.
@@ -350,3 +358,10 @@ class TCPServer(tasklet.Tasklet):
 
 			# Create a new TCPConnection for the socket 
 			self.connection_class(self, client_socket, client_addr)
+
+__all__ = [
+	"TCPServer",
+	"TCPConnection",
+	"ConnectionClosedException",
+	"ConnectionOverflowException"
+]
