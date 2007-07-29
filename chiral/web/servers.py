@@ -1,4 +1,5 @@
-from chiral.core import tasklet
+"""Web servers for use with chiral.web.httpd"""
+
 from paste.httpexceptions import *
 from paste.httpheaders import *
 
@@ -22,7 +23,11 @@ class StaticFileServer(object):
 		for item in path_components:
 			if item == "..":
 				start_response("403 Forbidden", [])
-				return [ "<html><head><title>403 Forbidden</title></head><body><h1>403 Forbidden</h1></body></html>" ]
+				return [
+					"<html><head><title>403 Forbidden</title></head>"
+					"<body><h1>403 Forbidden</h1></body></html>"
+				]
+
 		filename = os.path.join(self.path, *path_components)
 
 		try:
@@ -30,7 +35,10 @@ class StaticFileServer(object):
 		except OSError, exc:
 			if exc.errno == errno.ENOENT:
 				start_response("404 Not Found", [])
-				return [ "<html><head><title>404 Not Found</title></head><body><h1>404 Not Found</h1></body></html>" ]
+				return [
+					"<html><head><title>404 Not Found</title></head>"
+					"<body><h1>404 Not Found</h1></body></html>"
+				]
 			else:
 				raise exc
 
@@ -44,7 +52,10 @@ class StaticFileServer(object):
 			# We don't support directory listings.
 			if exc.errno in (errno.EACCES, errno.EISDIR):
 				start_response("403 Forbidden", [])
-				return [ "<html><head><title>403 Forbidden</title></head><body><h1>403 Forbidden</h1></body></html>" ]
+				return [
+					"<html><head><title>403 Forbidden</title></head>"
+					"<body><h1>403 Forbidden</h1></body></html>"
+				]
 			else:
 				raise exc
 
@@ -68,10 +79,3 @@ class StaticFileServer(object):
 			return environ['wsgi.file_wrapper'](rfile)
 		else:
 			return iter(lambda: rfile.read(4096), '')
-
-		#return rfile
-
-		#while True:
-		#	chunk = rfile.read(4096)
-		#	if chunk == '': break
-		#	yield chunk

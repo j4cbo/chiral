@@ -187,7 +187,7 @@ class HTTPConnection(tcp.TCPConnection):
 			environ["CONTENT_LENGTH"] = environ.get("HTTP_CONTENT_LENGTH", "")
 
 			# If a 100 Continue is expected, send it now.
-			if protocol == "HTTP/1.1" and "HTTP_EXPECT" in environ and "100-continue" in environ["HTTP_EXPECT"]:
+			if protocol == "HTTP/1.1" and "100-continue" in environ.get("HTTP_EXPECT", ""):
 				yield self.sendall("HTTP/1.1 100 Continue\r\n\r\n")
 
 			# If this is a POST request with Content-Length, read its data

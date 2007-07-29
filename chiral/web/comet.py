@@ -34,7 +34,13 @@ class CometPage(tasklet.Tasklet):
 
 	METHOD_CHUNKED, METHOD_JS, METHOD_MXMR = xrange(3)
 
-	def __init__(self, environ, start_response, method=METHOD_MXMR, delimiter="\r\n\r\n---\r\n", jsmethod="chiral._comet_handler", content_type="text/plain"):
+	def __init__(
+		self, environ, start_response,
+		method=METHOD_MXMR,
+		delimiter="\r\n\r\n---\r\n",
+		jsmethod="chiral._comet_handler",
+		content_type="text/plain"
+	):
 		"""
 		Constructor.
 
@@ -111,9 +117,18 @@ class CometClockPage(CometPage):
 	"""
 
 	def __init__(self, environ, start_resp):
-		CometPage.__init__(self, environ, start_resp, content_type="text/html", method=self.METHOD_MXMR)
+		"""Initialize the CometClockPage. This should be called from a WSGI server."""
+		CometPage.__init__(
+			self, environ, start_resp,
+			content_type="text/html", method=self.METHOD_MXMR
+		)
 
 	def run(self):
+		"""Main loop.
+
+		Send a new page with the current time every second.
+		"""
+
 		curtime = time.time()
 		while True:
 			chunk = "<html><body><h1>Clock Test</h1><p>%s</p></body></html>" % (
@@ -125,7 +140,7 @@ class CometClockPage(CometPage):
 
 
 class CometClock(object):
-
+	"""Simple WSGI application that returns a CometClockPage at the root path."""
 	def __call__(self, environ, start_response):
 		path_info = environ.get('PATH_INFO', '')
 
