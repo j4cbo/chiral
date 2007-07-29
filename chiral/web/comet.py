@@ -1,6 +1,6 @@
 """Comet support"""
 
-from chiral.inet import reactor
+from chiral.net import reactor
 from chiral.core import tasklet
 import datetime
 import time

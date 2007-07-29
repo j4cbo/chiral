@@ -1,6 +1,6 @@
 """TCP/IP networking."""
 
-from chiral.inet import netcore
+from chiral.net import netcore
 
 # This is not a constant.
 #pylint: disable-msg=C0103

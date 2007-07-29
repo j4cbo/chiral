@@ -2,7 +2,7 @@ import sys
 import gc
 
 from chiral.core import xreload, tasklet
-from chiral.inet import reactor
+from chiral.net import reactor
 
 from paste import request
 

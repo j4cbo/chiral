@@ -1,6 +1,6 @@
 """Python shell server."""
 
-from chiral.inet import tcp
+from chiral.net import tcp
 from StringIO import StringIO
 import socket
 import sys

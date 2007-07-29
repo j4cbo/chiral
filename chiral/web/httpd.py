@@ -2,7 +2,7 @@
 Chiral HTTP server supporting WSGI
 """
 
-from chiral.inet import tcp
+from chiral.net import tcp
 from chiral.core import tasklet
 from cStringIO import StringIO
 
@@ -358,7 +358,7 @@ class HTTPConnection(tcp.TCPConnection):
 				break
 
 class HTTPServer(tcp.TCPServer):
-	"""An HTTP server, based on chiral.inet.tcp.TCPServer."""
+	"""An HTTP server, based on chiral.net.tcp.TCPServer."""
 	connection_class = HTTPConnection
 	def __init__(self, bind_addr = ('', 80), application=None):
 		self.application = application

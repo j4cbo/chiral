@@ -3,7 +3,7 @@
 print "Loading modules..."
 
 from chiral.core import stats
-from chiral.inet import reactor
+from chiral.net import reactor
 
 from chiral.web.httpd import HTTPServer
 from chiral.shell import ChiralShellServer

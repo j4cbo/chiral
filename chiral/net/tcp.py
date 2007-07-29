@@ -1,14 +1,14 @@
 """TCP connection handling classes."""
 
 from chiral.core import tasklet
-from chiral.inet import reactor
+from chiral.net import reactor
 import sys
 import socket
 import errno
 import weakref
 
 if sys.version_info[:2] < (2, 5):
-	raise RuntimeError("chiral.inet.tcp requires Python 2.5 for generator expressions.")
+	raise RuntimeError("chiral.net.tcp requires Python 2.5 for generator expressions.")
 
 try:
 	from sendfile import sendfile

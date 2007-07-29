@@ -47,7 +47,7 @@ class Reactor(object):
 		# be replaced when the module is reloaded. Therefore, as
 		# little logic as possible should happen here.
 		while True:
-			stats.increment("chiral.inet.netcore.%s.loops" % self.__class__.__name__)
+			stats.increment("chiral.net.netcore.%s.loops" % self.__class__.__name__)
 			res = self._run_once()
 			if not res:
 				break
@@ -140,7 +140,7 @@ class SelectReactor(Reactor):
 	def _run_once(self):
 		"""Run one iteration of the event handler."""
 
-		stats.increment("chiral.inet.netcore.select_calls")
+		stats.increment("chiral.net.netcore.select_calls")
 
 		delay = self.time_to_next_event()
 
