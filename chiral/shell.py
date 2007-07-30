@@ -28,6 +28,7 @@ class ChiralShellConnection(tcp.TCPConnection, code.InteractiveInterpreter):
 
 		"""
 		try:
+			old_display_hook = sys.displayhook
 			sys.displayhook = self.displayhook
 			exec codeobj in self.locals
 		except SystemExit:
@@ -38,10 +39,9 @@ class ChiralShellConnection(tcp.TCPConnection, code.InteractiveInterpreter):
 			if code.softspace(self.outputbuffer, 0):
 				self.outputbuffer.write("\n")
 		finally:
-			sys.displayhook = sys.__displayhook__
+			sys.displayhook = old_display_hook
 
-
-	def handler(self):
+	def connection_handler(self):
 		self.outputbuffer = StringIO()
 
 		code.InteractiveInterpreter.__init__(self)

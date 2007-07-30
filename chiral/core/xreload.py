@@ -30,6 +30,7 @@ Some of the many limitiations include:
 	- Classes involving __slots__ are not handled correctly
 """
 
+import marshal
 import imp
 import sys
 import types

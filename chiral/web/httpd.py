@@ -85,7 +85,7 @@ class HTTPConnection(tcp.TCPConnection):
 
 		return self.sendall(resp.render_headers() + content)
 
-	def handler(self):
+	def connection_handler(self):
 		"""The main request processing loop."""
 
 		while True:
@@ -105,9 +105,13 @@ class HTTPConnection(tcp.TCPConnection):
 
 			waiting_tasklet = []
 
+			# Get ready for a WSGI response
+			response = HTTPResponse(self)
+
 			# Prepare WSGI environment
 			environ = {
 				'chiral.http.connection': self,
+				'chiral.http.response': response,
 				'wsgi.version': (1, 0),
 				'wsgi.url_scheme': 'http',
 				'wsgi.input': '',
@@ -195,9 +199,6 @@ class HTTPConnection(tcp.TCPConnection):
 				postdata = yield self.read_exactly(int(environ["CONTENT_LENGTH"]))
 				environ["wsgi.input"] = StringIO(postdata)
 
-			# Get ready for a WSGI response
-			response = HTTPResponse(self)
-
 			def set_tasklet(tlet):
 				"""
 				Tell the HTTP response to not close until Tasklet has completed.
@@ -261,14 +262,14 @@ class HTTPConnection(tcp.TCPConnection):
 
 				# Use TCP_CORK if available
 				if hasattr(socket, "TCP_CORK"):
-					self.client_sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_CORK, 1)
+					self.remote_sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_CORK, 1)
 
 				yield self.sendall(response.render_headers())
 
 				res = yield self.sendfile(result.filelike, 0, result.blocksize)
 
 				if hasattr(socket, "TCP_CORK"):
-					self.client_sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_CORK, 0)
+					self.remote_sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_CORK, 0)
 
 				offset = res
 				while res:
@@ -279,7 +280,7 @@ class HTTPConnection(tcp.TCPConnection):
 				result.close()
 
 				# Close if necessary
-				if not self.should_keep_alive:
+				if not response.should_keep_alive:
 					self.close()
 					break
 
@@ -336,17 +337,18 @@ class HTTPConnection(tcp.TCPConnection):
 					pass
 
 				# Iterate through and send any delayed data as well
-				for data in delayed_data:
-					# Ignore empty chunks
-					if not data:
-						continue
+				if delayed_data:
+					for data in delayed_data:
+						# Ignore empty chunks
+						if not data:
+							continue
 
-					# Add the headers, if not already sent
-					if not headers_sent:
-						headers_sent = True
-						data = response.render_headers() + data
+						# Add the headers, if not already sent
+						if not headers_sent:
+							headers_sent = True
+							data = response.render_headers() + data
 
-					yield self.sendall(data)
+						yield self.sendall(data)
 				
 			# Call any close handler on the WSGI app's result
 			if hasattr(result, 'close'):

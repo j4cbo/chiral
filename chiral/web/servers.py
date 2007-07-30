@@ -1,7 +1,6 @@
 """Web servers for use with chiral.web.httpd"""
 
-from paste.httpexceptions import *
-from paste.httpheaders import *
+from paste.httpheaders import IF_MODIFIED_SINCE
 
 from rfc822 import formatdate
 import mimetypes

@@ -29,47 +29,21 @@ class TCPConnection(tasklet.Tasklet):
 	Provides basic interface for TCP connections.
 	"""
 
-	def handler(self):
+	def connection_handler(self):
 		"""
 		Main event processing loop.
 
-		The handler() method will be run as a Tasklet when the TCPConnection
+		The connection_handler() method will be run as a Tasklet when the TCPConnection
 		is initialized. It should be overridden in the derived class.
 		"""
 		raise NotImplementedError
 
-	def handle_client_close(self):
-		"""
-		Connection.handle_client_close() will be called when the connection
-		has been closed on the client end. Perform any necessary cleanup here.
-		"""
-
-	def handle_server_close(self):
-		"""
-		Connection.handle_server_close() will be called when the connection
-		is about to be closed by the server. Perform any necessary cleanup here.
-		"""
-		
 	def close(self, *args):
 		"""
-		Call self.close() on a connection to perform a clean shutdown. The
-		handle_server_close() method will be called before closing the actual
-		socket.
+		Call self.close() on a connection to perform a clean shutdown.
 		"""
 
-		self.handle_server_close()
-		self.client_sock.close()
-
-	def client_closed(self):
-		"""
-		Call self.client_closed() on a connection whenever it is detected
-		that the client has closed it (i.e. recv() returns zero bytes). The
-		built-in read_line and read_exactly functions will call this when
-		necessary. client_closed() calls handle_client_close() before removing
-		the connection.
-		"""
-		self.handle_client_close()
-		self.client_sock.close()
+		self.remote_sock.close()
 
 	def _read_line_tasklet(self, max_len, delimiter):
 		"""Helper tasklet created by read_line if data is not immediately available."""
@@ -106,7 +80,7 @@ class TCPConnection(tasklet.Tasklet):
 
 		# If not, attempt to recv()
 		try:
-			new_data = self.client_sock.recv(max_len)
+			new_data = self.remote_sock.recv(max_len)
 		except socket.error, exc:
 			if exc[0] == errno.EAGAIN:
 				# OK, we're going to need to spawn a new tasklet.
@@ -180,7 +154,7 @@ class TCPConnection(tasklet.Tasklet):
 				res = socket_op(parameter)
 			except socket.error, exc:
 				if exc[0] == errno.EAGAIN:
-					cb_func(self, self.client_sock, blocked_operation_handler)
+					cb_func(self, self.remote_sock, blocked_operation_handler)
 					return callback
 				else:
 					raise exc
@@ -188,7 +162,7 @@ class TCPConnection(tasklet.Tasklet):
 			# Don't bother. (try_now is set False by functions like read_line,
 			# which attempt the low-level operations themselves first to avoid
 			# creating Tasklets unnecessarily.)
-			cb_func(self, self.client_sock, blocked_operation_handler)
+			cb_func(self, self.remote_sock, blocked_operation_handler)
 			return callback
 
 		return res
@@ -200,7 +174,7 @@ class TCPConnection(tasklet.Tasklet):
 		already been attempted.
 		"""
 		return self._async_socket_operation(
-			self.client_sock.recv,
+			self.remote_sock.recv,
 			reactor.wait_for_readable,
 			buflen,
 			try_now
@@ -222,7 +196,7 @@ class TCPConnection(tasklet.Tasklet):
 
 		# Try writing the data.
 		try:
-			res = self.client_sock.send(data)
+			res = self.remote_sock.send(data)
 		except socket.error, exc:
 			if exc[0] == errno.EPIPE:
 				raise ConnectionClosedException()
@@ -246,7 +220,7 @@ class TCPConnection(tasklet.Tasklet):
 		sent; in most cases, sendall() should be used.
 		"""
 		return self._async_socket_operation(
-			self.client_sock.send,
+			self.remote_sock.send,
 			reactor.wait_for_writeable,
 			data,
 			try_now
@@ -270,7 +244,7 @@ class TCPConnection(tasklet.Tasklet):
 		# sendfile() is available. It takes a number of parameters, so we can't just use
 		# the _async_socket_operation helper.
 		try:
-			res = sendfile(self.client_sock.fileno(), infile.fileno(), offset, length)
+			res = sendfile(self.remote_sock.fileno(), infile.fileno(), offset, length)
 		except OSError, exc:
 			if exc.errno == errno.EAGAIN:
 				callback = tasklet.WaitForCallback("sendfile")
@@ -280,13 +254,13 @@ class TCPConnection(tasklet.Tasklet):
 					# Prevent pylint from complaining about "except Exception"
 					# pylint: disable-msg=W0703
 					try:
-						res = sendfile(self.client_sock.fileno(), infile.fileno(), offset, length)
+						res = sendfile(self.remote_sock.fileno(), infile.fileno(), offset, length)
 					except Exception, exc:
 						callback.throw(exc)
 					else:
 						callback(res[1])
 
-				reactor.wait_for_writeable(self, self.client_sock, blocked_operation_handler)
+				reactor.wait_for_writeable(self, self.remote_sock, blocked_operation_handler)
 				return callback
 			else:
 				raise exc
@@ -294,16 +268,19 @@ class TCPConnection(tasklet.Tasklet):
 		# sendfile() worked, so we're done.
 		return res[1]
 
-	def __init__(self, server, sock, addr):
-		self.server = server
-		self.server.connections[id(self)] = self
+	def __init__(self, sock, addr, server=None):
 
-		self.client_sock = sock
-		self.client_addr = addr
+		self.remote_sock = sock
+		self.remote_addr = addr
+		self.server = server
+
+		# Set the socket nonblocking. Socket objects have some magic that
+		# pylint doesn't grok, so suppress its "no setblocking member" warning.
+		self.remote_sock.setblocking(0) # pylint: disable-msg=E1101
+
 		self._buffer = ""
 
-		tasklet.Tasklet.__init__(self, self.handler())
-		#self.add_completion_callback(self.close)
+		tasklet.Tasklet.__init__(self, self.connection_handler(), autostart=False)
 
 class TCPServer(tasklet.Tasklet):
 	"""
@@ -352,12 +329,10 @@ class TCPServer(tasklet.Tasklet):
 				else:
 					break
 
-			# Set the client nonblocking. Socket objects have some magic that
-			# pylint doesn't grok, so suppress its "no setblocking member" warning.
-			client_socket.setblocking(0) # pylint: disable-msg=E1101
-
 			# Create a new TCPConnection for the socket 
-			self.connection_class(self, client_socket, client_addr)
+			new_conn = self.connection_class(client_socket, client_addr, self)
+			self.connections[id(new_conn)] = new_conn
+			new_conn.start()
 
 __all__ = [
 	"TCPServer",

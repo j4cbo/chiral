@@ -24,6 +24,7 @@ class CometPage(tasklet.Tasklet):
 		class JavascriptCometPage(CometPage):
 			def __init__(self, environ, start_resp):
 				CometPage.__init__(self, environ, start_resp, method=self.METHOD_JS)
+
 	@cvar METHOD_CHUNKED: Send data in chunks delimited by self.delimiter
 	@cvar METHOD_JS: Send data (which should be serialized JSON) as calls to self.jsmethod
 	@cvar METHOD_MXMR: Send data as a multipart/x-mixed-replace document
@@ -38,7 +39,7 @@ class CometPage(tasklet.Tasklet):
 		self, environ, start_response,
 		method=METHOD_MXMR,
 		delimiter="\r\n\r\n---\r\n",
-		jsmethod="chiral._comet_handler",
+		jsmethod="parent.chiral._comet_handler",
 		content_type="text/plain"
 	):
 		"""
@@ -57,7 +58,7 @@ class CometPage(tasklet.Tasklet):
 		if method == self.METHOD_CHUNKED:
 			outer_content_type = content_type
 		elif method == self.METHOD_JS:
-			outer_content_type = "text/javascript"
+			outer_content_type = "text/html"
 		elif method == self.METHOD_MXMR:
 			outer_content_type = "multipart/x-mixed-replace;boundary=ChiralMXMRBoundary"
 
@@ -72,10 +73,12 @@ class CometPage(tasklet.Tasklet):
 
 	def __iter__(self):
 		
-		if self.method == self.METHOD_MXMR:
+		if self.method == self.METHOD_CHUNKED:
+			return iter([self.delimiter])
+		elif self.method == self.METHOD_JS:
+			return iter(["<html><head>"])
+		elif self.method == self.METHOD_MXMR:
 			return iter(["--ChiralMXMRBoundary\r\n"])
-		else:
-			return iter([""])
 
 	def send_chunk(self, data):
 		"""
@@ -92,7 +95,7 @@ class CometPage(tasklet.Tasklet):
 		if self.method == self.METHOD_CHUNKED:
 			return self.http_connection.sendall("%s%s" % (data, self.delimiter))
 		elif self.method == self.METHOD_JS:
-			return self.http_connection.sendall("%s(%s)" % (self.jsmethod, data))
+			return self.http_connection.sendall("<script type=\"text/javascript\">%s(%s);</script>\r\n" % (self.jsmethod, data))
 		elif self.method == self.METHOD_MXMR:
 			data = str(data)
 			message = "Content-type: %s\r\n\r\n%s\r\n--ChiralMXMRBoundary\r\n" % (
