@@ -349,6 +349,11 @@ class HTTPConnection(tcp.TCPConnection):
 							data = response.render_headers() + data
 
 						yield self.sendall(data)
+
+			# If the waiting tasklet didn't return any data at all, send the headers already.
+			if not headers_sent:
+				headers_sent = True
+				yield self.sendall(response.render_headers(no_content=True))
 				
 			# Call any close handler on the WSGI app's result
 			if hasattr(result, 'close'):
