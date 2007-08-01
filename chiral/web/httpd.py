@@ -91,7 +91,7 @@ class HTTPConnection(tcp.TCPConnection):
 		while True:
 			# Read the first line
 			try:
-				line = yield self.read_line(delimiter="\r\n")
+				line = yield self.read_line()
 				# Ignore blank lines, as suggested by the RFC
 				if not line:
 					continue
@@ -139,7 +139,7 @@ class HTTPConnection(tcp.TCPConnection):
 			last_key = None
 			while True:
 				try:
-					line = yield self.read_line(delimiter="\r\n")
+					line = yield self.read_line()
 					if not line:
 						break
 				except tcp.ConnectionOverflowException:

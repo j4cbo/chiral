@@ -59,7 +59,7 @@ class ChiralShellConnection(tcp.TCPConnection, code.InteractiveInterpreter):
 
 			# Read the next line of code
 			try:
-				buffer.append((yield self.read_line()).strip())
+				buffer.append((yield self.read_line(delimiter="\n")).strip())
 			except (tcp.ConnectionClosedException, socket.error):
 				return
 

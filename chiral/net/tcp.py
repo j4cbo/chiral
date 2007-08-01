@@ -66,7 +66,7 @@ class TCPConnection(tasklet.Tasklet):
 
 
 	@tasklet.returns_waitcondition
-	def read_line(self, max_len = 1024, delimiter = "\n"):
+	def read_line(self, max_len = 1024, delimiter = "\r\n"):
 		"""
 		Read a line (delimited by any member of the "delimiters" tuple) from
 		the client. If more than max_length characters are read before a

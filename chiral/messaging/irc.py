@@ -232,7 +232,7 @@ class IRCConnection(base.MessagingConnection, tcp.TCPConnection):
 		)
 
 		while True:
-			line = yield self.read_line(delimiter="\r\n")
+			line = yield self.read_line()
 			print line
 			prefix, command, params = self._parse_line(line)
 
