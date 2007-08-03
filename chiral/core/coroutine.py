@@ -336,7 +336,7 @@ class Coroutine(object):
 
 	__state_names = "stopped", "running", "suspended", "completed", "failed"
 
-	def __init__(self, generator, default_callback=None, autostart=True):
+	def __init__(self, generator, default_callback=None, autostart=True, is_watched=False):
 		"""
 		Create a coroutine instance. "generator" is the function or method that contains
 		the body of the coroutine code.
@@ -352,7 +352,7 @@ class Coroutine(object):
 
 		self.wait_condition = None
 
-		self.is_watched = False
+		self.is_watched = is_watched
 
 		_COROUTINES[id(self)] = self
 
@@ -391,7 +391,7 @@ class Coroutine(object):
 
 				self.result = (result, None)
 
-			except Exception:
+			except Exception: #pylint: disable-msg=W0703
 				# An (unexpected) exception was thrown; terminate the coroutine.
 				self.state = self.STATE_FAILED
 				self.result = (None, sys.exc_info())
@@ -409,7 +409,7 @@ class Coroutine(object):
 						if callback_result is not None:
 							self.result = callback_result
 
-					except Exception:
+					except Exception: #pylint: disable-msg=W0703
 						# If the completion callback itself raises an Exception, make
 						# it as if the coroutine failed with that exception.
 						self.result = (None, sys.exc_info())

@@ -1,6 +1,6 @@
-"""Tests for chiral.core.tasklet"""
+"""Tests for chiral.core.coroutine"""
 
-from chiral.core import tasklet
+from chiral.core import coroutine
 
 import unittest
 
@@ -8,161 +8,161 @@ class TestException(Exception):
 	"""Subclass of Exception for test purposes"""
 	pass
 
-def tasklet_gen_returning(value):
-	"""Generator for tasklet that returns immediately"""
-	raise StopIteration(value)
+def coroutine_gen_returning(value):
+	"""Generator for coroutine that returns immediately"""
 	yield
+	raise StopIteration(value)
 
-def tasklet_gen_raising(exc):
-	"""Generator for tasklet that raises an exception"""
+def coroutine_gen_raising(exc):
+	"""Generator for coroutine that raises an exception"""
+	yield
 	raise exc
-	yield
 
-@tasklet.task
-def tasklet_with_decorator(value):
-	"""Test of tasklet.task"""
+@coroutine.as_coro
+def coroutine_with_decorator(value):
+	"""Test of coroutine.task"""
+	yield
 	raise StopIteration(value)
-	yield
 
-def tasklet_gen_yielding(callback):
-	"""Generator for tasklet that yields cb, then returns the result"""
+def coroutine_gen_yielding(callback):
+	"""Generator for coroutine that yields cb, then returns the result"""
 	res = yield callback
 	raise StopIteration(res)
 
+# Yes, CoroutineTests will have a lot of public methods.
+#pylint: disable-msg=R0904
 
-class TaskletTests(unittest.TestCase):
+class CoroutineTests(unittest.TestCase):
 	"""Main test case"""
 
-	def check_suspended(self, tlet, wait_condition):
-		"""Verify that tlet is in the SUSPENDED state, waiting for wait_condition"""
-		self.assertEqual(tlet.state, tasklet.Tasklet.STATE_SUSPENDED)
-		self.assertEqual(tlet.result, None)
-		self.assertEqual(tlet.wait_condition, wait_condition)
+	def check_suspended(self, coro, wait_condition):
+		"""Verify that coro is in the SUSPENDED state, waiting for wait_condition"""
+		self.assertEqual(coro.state, coroutine.Coroutine.STATE_SUSPENDED)
+		self.assertEqual(coro.result, None)
+		self.assertEqual(coro.wait_condition, wait_condition)
 
-	def check_completed(self, tlet, value):
-		"""Verify that tlet has completed with value"""
-		self.assertEqual(tlet.state, tasklet.Tasklet.STATE_COMPLETED)
-		self.assertEqual(tlet.result, (value, None))
-		self.assertEqual(tlet.wait_condition, None)
+	def check_completed(self, coro, value):
+		"""Verify that coro has completed with value"""
+		self.assertEqual(coro.state, coroutine.Coroutine.STATE_COMPLETED)
+		self.assertEqual(coro.result, (value, None))
+		self.assertEqual(coro.wait_condition, None)
 
-	def check_failed(self, tlet, exc):
-		"""Verify that tlet has failed with exc"""
-		return_value = tlet.result[0]
-		exc_type, exc_value = tlet.result[1][:2]
-		self.assertEqual(tlet.state, tasklet.Tasklet.STATE_FAILED)
+	def check_failed(self, coro, exc):
+		"""Verify that coro has failed with exc"""
+		return_value = coro.result[0]
+		exc_type, exc_value = coro.result[1][:2]
+		self.assertEqual(coro.state, coroutine.Coroutine.STATE_FAILED)
 		self.assertEqual((return_value, exc_type, exc_value), (None, type(exc), exc))
-		self.assertEqual(tlet.wait_condition, None)
+		self.assertEqual(coro.wait_condition, None)
 
 	def test_immediate_return(self):
-		"""Check a simple, immediately-returning Tasklet."""
+		"""Check a simple, immediately-returning Coroutine."""
 
-		tlet = tasklet.Tasklet(tasklet_gen_returning(42))
+		coro = coroutine.Coroutine(coroutine_gen_returning(42))
 
-		self.assertEqual(tlet.state, tasklet.Tasklet.STATE_COMPLETED)
-		self.assertEqual(tlet.result, (42, None))
+		self.assertEqual(coro.state, coroutine.Coroutine.STATE_COMPLETED)
+		self.assertEqual(coro.result, (42, None))
 
-	def test_failed_tasklet(self):
-		"""Check that Tasklets handle exceptions properly."""
+	def test_failed_coroutine(self):
+		"""Check that Coroutines handle exceptions properly."""
 
 		exc = TestException(42)
 
 		dummy_callback_called = []
 
-		def dummy_callback(cb_tlet, retval, exc_info):
+		def dummy_callback(retval, exc_info):
 			"""Check that exceptions are passed to the completion callback"""
 			exc_type, exc_value = exc_info[:2]
 
 			self.failIf(dummy_callback_called)
 			self.assertEqual((retval, exc_type, exc_value), (None, TestException, exc))
 
-			dummy_callback_called[:] = [cb_tlet]
+			dummy_callback_called[:] = [True]
 
-		tlet = tasklet.Tasklet(tasklet_gen_raising(exc), default_callback = dummy_callback)
-
-		self.check_failed(tlet, exc)
+		coro = coroutine.Coroutine(
+			coroutine_gen_raising(exc),
+			default_callback = dummy_callback,
+			is_watched = True
+		)
+		self.check_failed(coro, exc)
 
 	def test_decorator(self):
-		"""Check that the @tasklet.task decorator functions properly"""
+		"""Check that the @coroutine.task decorator functions properly"""
 
-		tlet = tasklet_with_decorator(42)
-		self.check_completed(tlet, 42)
+		coro = coroutine_with_decorator(42)
+		self.check_completed(coro, 42)
 
-	def test_wait_condition_NotImplemented(self):
+	def test_wc_not_implemented(self):
 		"""Check that attempting to instantiate the WaitCondition base class will fail."""
 
-		self.assertRaises(NotImplementedError, tasklet.WaitCondition)
+		self.assertRaises(NotImplementedError, coroutine.WaitCondition)
 
 	def test_callback(self):
 		"""Check the WaitForCallback class."""
 
-		callback = tasklet.WaitForCallback()
-		tlet = tasklet.Tasklet(tasklet_gen_yielding(callback))
+		callback = coroutine.WaitForCallback()
+		coro = coroutine.Coroutine(coroutine_gen_yielding(callback))
 
-		self.check_suspended(tlet, callback)
+		self.check_suspended(coro, callback)
 
-		self.assert_(repr(callback) in repr(tlet))
-		self.assert_("suspended" in repr(tlet))
-		self.assert_("tasklet_gen_yielding" in repr(tlet))
+		self.assert_(repr(callback) in repr(coro))
+		self.assert_("suspended" in repr(coro))
+		self.assert_("coroutine_gen_yielding" in repr(coro))
 
 		callback(42)
 
-		self.check_completed(tlet, 42)
+		self.check_completed(coro, 42)
 
 	def test_callback_throw(self):
 		"""Check the WaitForCallback class's throw method."""
 
-		def dummy_callback(cb_tlet, retval, exc_info):
-			pass
-
 		exc = TestException(42)
-		callback = tasklet.WaitForCallback()
-		tlet = tasklet.Tasklet(tasklet_gen_yielding(callback), dummy_callback)
+		callback = coroutine.WaitForCallback()
+		coro = coroutine.Coroutine(coroutine_gen_yielding(callback), is_watched=True)
 
-		self.check_suspended(tlet, callback)
+		self.check_suspended(coro, callback)
 
 		callback.throw(exc)
 
-		self.check_failed(tlet, exc)
+		self.check_failed(coro, exc)
 
 	def test_wait_for_nothing(self):
 		"""Check the WaitForNothing class."""
 
-		callback = tasklet.WaitForNothing(42)
+		callback = coroutine.WaitForNothing(42)
 		self.assert_("42" in repr(callback))
 
-		tlet = tasklet.Tasklet(tasklet_gen_yielding(callback))
+		coro = coroutine.Coroutine(coroutine_gen_yielding(callback))
 
-		self.check_completed(tlet, 42)
+		self.check_completed(coro, 42)
 
-	def test_wait_for_tasklet(self):
-		"""Check handling of a Tasklet yielding a WaitForTasklet."""
+	def test_wait_for_coroutine(self):
+		"""Check handling of a Coroutine yielding a WaitForCoroutine."""
 
-		inner_tlet = tasklet.Tasklet(tasklet_gen_returning(42))
-		tlet = tasklet.Tasklet(tasklet_gen_yielding(tasklet.WaitForTasklet(inner_tlet)))
+		inner_coro = coroutine.Coroutine(coroutine_gen_returning(42))
+		coro = coroutine.Coroutine(coroutine_gen_yielding(coroutine.WaitForCoroutine(inner_coro)))
 
-		self.check_completed(tlet, 42)
+		self.check_completed(coro, 42)
 
 	def test_wait_for_unfinished(self):
-		"""Check that WaitForTasklet will call back a parent tasklet properly."""
+		"""Check that WaitForCoroutine will call back a parent coroutine properly."""
 
-		inner_cb = tasklet.WaitForCallback()
-		inner_tlet = tasklet.Tasklet(tasklet_gen_yielding(inner_cb))
+		inner_cb = coroutine.WaitForCallback()
+		inner_coro = coroutine.Coroutine(coroutine_gen_yielding(inner_cb))
 
-		waitcondition = tasklet.WaitForTasklet(inner_tlet)
-		tlet = tasklet.Tasklet(tasklet_gen_yielding(waitcondition))
+		waitcondition = coroutine.WaitForCoroutine(inner_coro)
+		coro = coroutine.Coroutine(coroutine_gen_yielding(waitcondition))
 
-		self.assert_(repr(inner_tlet) in repr(waitcondition))
-		self.assert_(repr(waitcondition) in repr(tlet))
+		self.assert_(repr(inner_coro) in repr(waitcondition))
+		self.assert_(repr(waitcondition) in repr(coro))
 
-		self.check_suspended(inner_tlet, inner_cb)
-		self.check_suspended(tlet, waitcondition)
+		self.check_suspended(inner_coro, inner_cb)
+		self.check_suspended(coro, waitcondition)
 
 		inner_cb(42)
 
-		self.check_completed(inner_tlet, 42)
-		self.check_completed(tlet, 42)
-
-		pass
+		self.check_completed(inner_coro, 42)
+		self.check_completed(coro, 42)
 
 if __name__ == '__main__':
 	unittest.main()
