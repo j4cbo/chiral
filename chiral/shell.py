@@ -4,7 +4,6 @@ from chiral.net import tcp
 from StringIO import StringIO
 import socket
 import sys
-import traceback
 import code
 
 _CHIRAL_RELOADABLE = True
@@ -12,8 +11,10 @@ _CHIRAL_RELOADABLE = True
 class ChiralShellConnection(tcp.TCPConnection, code.InteractiveInterpreter):
 	"""A connection to the Chiral shell."""
 
-	def displayhook(self, result):
-		print >>self.outputbuffer, result
+	def _displayhook(self, result):
+		"""Add result to self.outputbuffer"""
+		if result is not None:
+			self.outputbuffer.write(repr(result) + "\n")
 
 	def runcode(self, codeobj):
 		"""Execute a code object.
@@ -25,12 +26,12 @@ class ChiralShellConnection(tcp.TCPConnection, code.InteractiveInterpreter):
 		A note about KeyboardInterrupt: this exception may occur
 		elsewhere in this code, and may not always be caught.  The
 		caller should be prepared to deal with it.
-
 		"""
+
 		try:
-			old_display_hook = sys.displayhook
-			sys.displayhook = self.displayhook
-			exec codeobj in self.locals
+			old_display_hook, sys.displayhook = sys.displayhook, self._displayhook
+			old_stdout, sys.stdout = sys.stdout, self.outputbuffer
+			exec codeobj in self.locals #pylint: disable-msg=W0122
 		except SystemExit:
 			raise
 		except:
@@ -40,14 +41,16 @@ class ChiralShellConnection(tcp.TCPConnection, code.InteractiveInterpreter):
 				self.outputbuffer.write("\n")
 		finally:
 			sys.displayhook = old_display_hook
+			sys.stdout = old_stdout
 
 	def connection_handler(self):
+		"""Main connection handler for Chiral shell."""
 		self.outputbuffer = StringIO()
 
 		code.InteractiveInterpreter.__init__(self)
 
 		more = False
-		buffer = []
+		inputbuffer = []
 
 		while True:
 			# Prompt line
@@ -59,28 +62,50 @@ class ChiralShellConnection(tcp.TCPConnection, code.InteractiveInterpreter):
 
 			# Read the next line of code
 			try:
-				buffer.append((yield self.read_line(delimiter="\n")).strip())
+				inputbuffer.append((yield self.read_line()))
 			except (tcp.ConnectionClosedException, socket.error):
 				return
 
 			try:
-				more = self.runsource("\n".join(buffer), "<console>")
+				more = self.runsource("\n".join(inputbuffer), "<console>")
 			except SystemExit:
 				break
 			
 			if not more:
-				buffer = []
+				inputbuffer = []
 
 			output = self.outputbuffer.getvalue()
 			if output:
 				yield self.send(output)
 				self.outputbuffer.truncate(0)
 
-
 	def write(self, data):
+		"""Add data to self.outputbuffer.
+
+		Used internally by self.showtraceback().
+		"""
 		self.outputbuffer.write(data)
 
+	def __init__(self, sock, addr, server):
+		tcp.TCPConnection.__init__(self, sock, addr, server)
+		code.InteractiveInterpreter.__init__()
+		self.outputbuffer = None
+		
+
+
 class ChiralShellServer(tcp.TCPServer):
-	"""Python shell"""
+	"""Python shell.
+
+	The shell interface provided by ChiralShellServer is similar to the Python interactive
+	interpreter. It supports single- and multi-line statements, the 'import' statement, etc.,
+	and runs in the same interpreter context as the rest of the Chiral process. Be careful;
+	infinite loops will not be interruptible, although sending a Control-C directly to the
+	process will cause a KeyboardInterrupt to be raised in the inner loop.
+
+	WARNING: This has the potential to be extremely insecure. ChiralShellServer should only ever be
+	bound to the local network interface on a trusted machine; under no circumstances is it safe to
+	expose to the Internet.
+	"""
+
 	connection_class = ChiralShellConnection
 
