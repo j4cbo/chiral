@@ -136,6 +136,7 @@ class BusConnection(tcp.TCPConnection):
 
 		# Build up the message header
 		message_header = { 
+		}
 
 
 	def connection_handler(self):

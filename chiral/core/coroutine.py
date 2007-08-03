@@ -53,7 +53,7 @@ def as_coro(gen, *args, **kwargs):
 @decorator
 def as_coro_waitcondition_decorator(gen, *args, **kwargs):
 	"""
-	Implementation of coro_waitcondition.
+	Implementation of as_coro_waitcondition.
 
 	This is a separate function because the decorator module (@decorator) does not provide
 	for modification of the decorated function docstring.
@@ -73,7 +73,8 @@ def as_coro_waitcondition(func):
 
 @decorator
 def returns_waitcondition_decorator(func, *args, **kwargs):
-	"""Implementation of returns_waitcondition.
+	"""
+	Implementation of returns_waitcondition.
 
 	This is a separate function because the decorator module (@decorator) does not provide
 	for modification of the decorated function docstring.
