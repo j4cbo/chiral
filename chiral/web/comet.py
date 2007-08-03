@@ -1,13 +1,13 @@
 """Comet support"""
 
 from chiral.net import reactor
-from chiral.core import tasklet
+from chiral.core import coroutine
 import datetime
 import time
 
 _CHIRAL_RELOADABLE = True
 
-class CometPage(tasklet.Tasklet):
+class CometPage(coroutine.Coroutine):
 	"""
 	Helper for handling Comet pages.
 
@@ -67,9 +67,9 @@ class CometPage(tasklet.Tasklet):
 		self.http_connection = environ["chiral.http.connection"]
 
 		start_response('200 OK', [('Content-Type', outer_content_type)])
-		environ["chiral.http.set_tasklet"](self)
+		environ["chiral.http.set_coro"](self)
 
-		tasklet.Tasklet.__init__(self, self.run(), autostart=False)
+		coroutine.Coroutine.__init__(self, self.run(), autostart=False)
 
 	def __iter__(self):
 		

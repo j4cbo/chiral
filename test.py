@@ -20,7 +20,7 @@ from chiral.web.framework import *
 
 print "Initializing..."
 
-@tasklet_page()
+@coroutine_page()
 @use_template("genshi", "chiral.web.templates.asdf")
 def asyncpagetest():
 	yield

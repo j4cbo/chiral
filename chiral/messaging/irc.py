@@ -2,7 +2,7 @@
 
 from chiral.messaging import base
 from chiral.net import tcp
-from chiral.core.tasklet import returns_waitcondition
+from chiral.core.coroutine import returns_waitcondition
 
 _CHIRAL_RELOADABLE = True
 

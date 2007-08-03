@@ -1,6 +1,6 @@
 """Network event handling."""
 
-from chiral.core import tasklet, stats
+from chiral.core import coroutine, stats
 
 import time
 import heapq
@@ -96,7 +96,7 @@ class Reactor(object):
 		else:
 			raise ValueError("must specify either callbacktime or delay")
 
-		callback = tasklet.WaitForCallback()
+		callback = coroutine.WaitForCallback("reactor.schedule(callbacktime=%s)" % (callbacktime, ))
 
 		# Now the time is normalized; just add it to the queue.
 		heapq.heappush(self._events, (callbacktime, callback, app))

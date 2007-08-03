@@ -1,6 +1,6 @@
 """Abstract base classes (interfaces) for messaging"""
 
-from chiral.core.tasklet import returns_waitcondition
+from chiral.core.coroutine import returns_waitcondition
 
 class MessagingUser(object):
 	"""

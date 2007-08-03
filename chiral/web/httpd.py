@@ -3,7 +3,7 @@ Chiral HTTP server supporting WSGI
 """
 
 from chiral.net import tcp
-from chiral.core import tasklet
+from chiral.core import coroutine
 from cStringIO import StringIO
 
 from paste.util.quoting import html_quote
@@ -103,7 +103,7 @@ class HTTPConnection(tcp.TCPConnection):
 			except (tcp.ConnectionClosedException, socket.error):
 				return
 
-			waiting_tasklet = []
+			waiting_coro = []
 
 			# Get ready for a WSGI response
 			response = HTTPResponse(self)
@@ -199,12 +199,12 @@ class HTTPConnection(tcp.TCPConnection):
 				postdata = yield self.read_exactly(int(environ["CONTENT_LENGTH"]))
 				environ["wsgi.input"] = StringIO(postdata)
 
-			def set_tasklet(tlet):
+			def set_coro(coro):
 				"""
-				Tell the HTTP response to not close until Tasklet has completed.
+				Tell the HTTP response to not close until coro has completed.
 				"""
-				waiting_tasklet[:] = [ tlet ]
-			environ['chiral.http.set_tasklet'] = set_tasklet
+				waiting_coro[:] = [ coro ]
+			environ['chiral.http.set_coro'] = set_coro
 
 
 			# Determine if we may do a keep-alive.
@@ -252,7 +252,7 @@ class HTTPConnection(tcp.TCPConnection):
 			# If the iterable has length 1, then we can determine the length
 			# of the whole result now.
 			try:
-				if len(result) == 1 and not waiting_tasklet:
+				if len(result) == 1 and not waiting_coro:
 					response.headers["Content-Length"] = len(result[0])
 			except TypeError:
 				pass
@@ -319,20 +319,20 @@ class HTTPConnection(tcp.TCPConnection):
 					yield self.sendall(data)
 
 			# If no data at all was returned, the headers won't have been sent yet.
-			if not headers_sent and not waiting_tasklet:
+			if not headers_sent and not waiting_coro:
 				headers_sent = True
 				yield self.sendall(response.render_headers(no_content=True))
 
-			# If set_tasklet has been set, waiting_tasklet is a Tasklet that will
+			# If set_coro has been called, waiting_coro is a Coroutine that will
 			# complete once the response is done.
-			if waiting_tasklet:
-				tlet, = waiting_tasklet
-				tlet.start(force=False)
-				delayed_data = yield tasklet.WaitForTasklet(tlet)
+			if waiting_coro:
+				coro, = waiting_coro
+				coro.start(force=False)
+				delayed_data = yield coroutine.WaitForCoroutine(coro)
 
 				try:
 					if len(delayed_data) == 1:
-						response.headers["Content-Length"] = len(delayed_data[0])
+						response.headers["Content-Length"] = len(str(delayed_data[0]))
 				except TypeError:
 					pass
 
@@ -350,7 +350,7 @@ class HTTPConnection(tcp.TCPConnection):
 
 						yield self.sendall(data)
 
-			# If the waiting tasklet didn't return any data at all, send the headers already.
+			# If the waiting coro didn't return any data at all, send the headers already.
 			if not headers_sent:
 				headers_sent = True
 				yield self.sendall(response.render_headers(no_content=True))

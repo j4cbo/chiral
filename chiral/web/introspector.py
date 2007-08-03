@@ -1,7 +1,7 @@
 import sys
 import gc
 
-from chiral.core import xreload, tasklet
+from chiral.core import xreload, coroutine
 from chiral.net import reactor
 
 from paste import request
@@ -33,11 +33,11 @@ INTROSPECTOR_ROOT_TEMPLATE = """
   <p>Collection counts: ${ "%d, %d, %d" % gc.get_count() }</p>
   <p>Garbage: ${gc.garbage}</p>
 
-  <h2>Tasklets</h2>
-  <p>${len(list(tlet for tlet in tasklet._TASKLETS.valuerefs() if tlet))} tasklets.</p>
+  <h2>Coroutines</h2>
+  <p>${len(list(coro for coro in coroutine._COROUTINES.valuerefs() if coro))} coroutines.</p>
   <ul>
-   <li py:for="tlet in tasklet._TASKLETS.values()">
-    <a href="${rooturl}tasklet?id=${id(tlet)}">${repr(tlet)}</a>
+   <li py:for="coro in coroutine._COROUTINES.values()">
+    <a href="${rooturl}coroutine?id=${id(coro)}">${repr(coro)}</a>
    </li>
   </ul>
 
@@ -68,24 +68,24 @@ INTROSPECTOR_ROOT_TEMPLATE = """
 </html>
 """
 
-INTROSPECTOR_TASKLET_TEMPLATE = """
+INTROSPECTOR_COROUTINE_TEMPLATE = """
 <html xmlns:py="http://genshi.edgewall.org/">
  <head>
   <title>Chiral Introspector</title>
  </head>
  <body>
 
-  <h1>Tasklet ${id(tlet)}</h1>
-  <p>repr(): ${repr(tlet)}</p>
+  <h1>Coroutine ${id(coro)}</h1>
+  <p>repr(): ${repr(coro)}</p>
 
   <p>Referrers:</p>
   <ul>
-   <li py:for="ref in gc.get_referrers(tlet)">${repr(ref)}</li>
+   <li py:for="ref in gc.get_referrers(coro)">${repr(ref)}</li>
   </ul>
 
   <p>dir():</p>
   <ul>
-   <li py:for="key in dir(tlet)"><b>${key}</b>: ${repr(getattr(tlet, key))}</li>
+   <li py:for="key in dir(coro)"><b>${key}</b>: ${repr(getattr(coro, key))}</li>
   </ul>
 
  </body>
@@ -108,7 +108,7 @@ class Introspector(object):
 	"""WSGI application providing the Chiral Introspector."""
 
 	root_template = MarkupTemplate(INTROSPECTOR_ROOT_TEMPLATE)
-	tasklet_template = MarkupTemplate(INTROSPECTOR_TASKLET_TEMPLATE)
+	coroutine_template = MarkupTemplate(INTROSPECTOR_COROUTINE_TEMPLATE)
 	test_template = MarkupTemplate(INTROSPECTOR_TEST_TEMPLATE)
 
 	def __init__(self, next_application = None):
@@ -149,7 +149,7 @@ class Introspector(object):
 				rooturl = url,
 				gc = gc,
 				gc_collected = gc_collected,
-				tasklet = tasklet,
+				coroutine = coroutine,
 				reactor = reactor,
 				mod_list = mod_list
 			)
@@ -157,14 +157,14 @@ class Introspector(object):
 			start_response('200 OK', [('Content-Type', 'text/html')])
 			return [ template_stream.render() ]
 
-		elif path_info == '/tasklet':
-			tletid = int(request.parse_formvars(environ)["id"])
+		elif path_info == '/coroutine':
+			coroid = int(request.parse_formvars(environ)["id"])
 
-			if tletid not in tasklet._TASKLETS:
+			if coroid not in coroutine._COROUTINES:
 				start_response('200 OK', [('Content-Type', 'text/html')])
-				return [ "Tasklet not available" ]
+				return [ "Coroutine not available" ]
 
-			template_stream = self.tasklet_template.generate(tlet=tasklet._TASKLETS[tletid], gc=gc)
+			template_stream = self.coroutine_template.generate(coro=coroutine._COROUTINES[coroid], gc=gc)
 
 			start_response('200 OK', [('Content-Type', 'text/html')])
 			return [ template_stream.render() ]

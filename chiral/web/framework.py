@@ -1,6 +1,6 @@
 """Framework functions"""
 
-from chiral.core import tasklet
+from chiral.core import coroutine
 
 from paste import request
 import pkg_resources
@@ -43,46 +43,46 @@ def use_template(engine, template, **kwargs):
 
 	return decorate
 
-def completion_handler(tlet, retval, exc_info):
-	"""
-	Called when any tasklet-based page completes. Applies all
-	postprocessing steps, and returns the page to the browser.
-	"""
-
-	func, environ, start_response = tlet.parameters
-
-	if exc_info:
-		# Shit
-		raise exc_info
-
-	# Handle all the postprocessing steps
-	if hasattr(func, "chiral_postprocessors"):
-		for postproc in func.chiral_postprocessors:
-			retval = postproc(retval)
-
-	# Return it to the browser
-	conn = environ["chiral.http.connection"]
-	start_response("200 OK", {})
-
-	tlet.result = [ retval ], None
 
 
-def tasklet_page(include_get_vars=True):
+def coroutine_page(include_get_vars=True):
 	def decorate(func):
 		def wrapped_function(environ, start_response):
 
 			# Get the request information with Paste
 			req = request.parse_formvars(environ, include_get_vars).mixed()
 
-			# Start the tasklet. When it's done, we'll send the response back via
+			# Start the coroutine. When it's done, we'll send the response back via
 			# HTTP.
-			response_tasklet = tasklet.Tasklet(
+			response_coro = coroutine.Coroutine(
 				func(**req),
-				default_callback=completion_handler,
-				parameters = (func, environ, start_response)
+				autostart=False
 			)
 
-			environ["chiral.http.set_tasklet"](response_tasklet)
+			def completion_handler(retval, exc_info):
+				"""
+				Called when any coroutine-based page completes. Applies all
+				postprocessing steps, and returns the page to the browser.
+				"""
+
+				if exc_info:
+					# Shit
+					raise exc_info
+
+				# Handle all the postprocessing steps
+				if hasattr(func, "chiral_postprocessors"):
+					for postproc in func.chiral_postprocessors:
+						retval = postproc(retval)
+
+				# Return it to the browser
+				conn = environ["chiral.http.connection"]
+				start_response("200 OK", {})
+
+				response_coro.result = [ retval ], None
+
+			response_coro.set_completion_callback(completion_handler)
+
+			environ["chiral.http.set_coro"](response_coro)
 			return [""]
 
 		return wrapped_function

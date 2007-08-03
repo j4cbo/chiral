@@ -1,6 +1,6 @@
 """TCP connection handling classes."""
 
-from chiral.core import tasklet
+from chiral.core import coroutine
 from chiral.net import reactor
 import sys
 import socket
@@ -24,7 +24,7 @@ class ConnectionClosedException(Exception):
 	"""Indicates that the connection was closed."""
 	pass
 
-class TCPConnection(tasklet.Tasklet):
+class TCPConnection(coroutine.Coroutine):
 	"""
 	Provides basic interface for TCP connections.
 	"""
@@ -45,8 +45,9 @@ class TCPConnection(tasklet.Tasklet):
 
 		self.remote_sock.close()
 
-	def _read_line_tasklet(self, max_len, delimiter):
-		"""Helper tasklet created by read_line if data is not immediately available."""
+	@coroutine.as_coro
+	def _read_line_coro(self, max_len, delimiter):
+		"""Helper coroutine created by read_line if data is not immediately available."""
 		while True:
 			# Read more data
 			new_data = yield self.recv(max_len, try_now = False)
@@ -65,7 +66,7 @@ class TCPConnection(tasklet.Tasklet):
 				raise ConnectionOverflowException()
 
 
-	@tasklet.returns_waitcondition
+	@coroutine.returns_waitcondition
 	def read_line(self, max_len = 1024, delimiter = "\r\n"):
 		"""
 		Read a line (delimited by any member of the "delimiters" tuple) from
@@ -83,8 +84,8 @@ class TCPConnection(tasklet.Tasklet):
 			new_data = self.remote_sock.recv(max_len)
 		except socket.error, exc:
 			if exc[0] == errno.EAGAIN:
-				# OK, we're going to need to spawn a new tasklet.
-				return tasklet.WaitForTasklet(tasklet.Tasklet(self._read_line_tasklet(max_len, delimiter)))
+				# OK, we're going to need to spawn a new coroutine.
+				return coroutine.WaitForCoroutine(self._read_line_coro(max_len, delimiter))
 			else:
 				# Something else is broken; raise it again.
 				raise exc
@@ -100,13 +101,12 @@ class TCPConnection(tasklet.Tasklet):
 		if len(self._buffer) > max_len:
 			raise ConnectionOverflowException()
 
-		# The line isn't available yet. Spawn a tasklet to deal with it.
-		return tasklet.WaitForTasklet(tasklet.Tasklet(self._read_line_tasklet(max_len, delimiter)))
+		# The line isn't available yet. Spawn a coroutine to deal with it.
+		return coroutine.WaitForCoroutine(self._read_line_coro(max_len, delimiter))
 
 
 
-	@tasklet.returns_waitcondition
-	@tasklet.task_waitcondition
+	@coroutine.as_coro_waitcondition
 	def read_exactly(self, length, read_increment = 32768):
 		"""
 		Read and return exactly length bytes.
@@ -134,7 +134,7 @@ class TCPConnection(tasklet.Tasklet):
 	def _async_socket_operation(self, socket_op, cb_func, parameter, try_now):
 		"""Helper function for asynchronous operations."""
 
-		callback = tasklet.WaitForCallback(cb_func)
+		callback = coroutine.WaitForCallback(cb_func)
 
 		def blocked_operation_handler():
 			"""Callback for asynchronous operations."""
@@ -167,7 +167,7 @@ class TCPConnection(tasklet.Tasklet):
 
 		return res
 
-	@tasklet.returns_waitcondition
+	@coroutine.returns_waitcondition
 	def recv(self, buflen, try_now=True):
 		"""
 		Read data from the socket. Set try_now to False if a low-level recv() has
@@ -180,13 +180,14 @@ class TCPConnection(tasklet.Tasklet):
 			try_now
 		)
 
-	def _sendall_tasklet(self, data):
-		"""Helper tasklet created by sendall if not all data could be sent."""
+	@coroutine.as_coro_waitcondition
+	def _sendall_coro(self, data):
+		"""Helper coroutine created by sendall if not all data could be sent."""
 		while data:
 			res = yield self.send(data)
 			data = data[res:]
 
-	@tasklet.returns_waitcondition
+	@coroutine.returns_waitcondition
 	def sendall(self, data):
 		"""
 		Send all of data to the socket. The send() method and underlying system
@@ -209,10 +210,10 @@ class TCPConnection(tasklet.Tasklet):
 			else:
 				data = data[res:]
 
-		# There's still more data to be sent, so hand things off to the tasklet.
-		return tasklet.WaitForTasklet(tasklet.Tasklet(self._sendall_tasklet(data)))
+		# There's still more data to be sent, so hand things off to the coroutine.
+		return self._sendall_coro(data)
 
-	@tasklet.returns_waitcondition
+	@coroutine.returns_waitcondition
 	def send(self, data, try_now=True):
 		"""
 		Send data, and return the number of bytes actually sent. Note that the
@@ -226,7 +227,7 @@ class TCPConnection(tasklet.Tasklet):
 			try_now
 		)
 
-	@tasklet.returns_waitcondition
+	@coroutine.returns_waitcondition
 	def sendfile(self, infile, offset, length):
 		"""
 		Send up to len bytes of data from infile, starting at offset.
@@ -247,7 +248,7 @@ class TCPConnection(tasklet.Tasklet):
 			res = sendfile(self.remote_sock.fileno(), infile.fileno(), offset, length)
 		except OSError, exc:
 			if exc.errno == errno.EAGAIN:
-				callback = tasklet.WaitForCallback("sendfile")
+				callback = coroutine.WaitForCallback("sendfile")
 
 				def blocked_operation_handler():
 					"""Callback for asynchronous operations."""
@@ -280,9 +281,9 @@ class TCPConnection(tasklet.Tasklet):
 
 		self._buffer = ""
 
-		tasklet.Tasklet.__init__(self, self.connection_handler(), autostart=False)
+		coroutine.Coroutine.__init__(self, self.connection_handler(), autostart=False)
 
-class TCPServer(tasklet.Tasklet):
+class TCPServer(coroutine.Coroutine):
 	"""
 	This is a general-purpose TCP server. It manages one master
 	socket which listens on a TCP port and accepts connections;
@@ -304,10 +305,10 @@ class TCPServer(tasklet.Tasklet):
 		self.master_socket.bind(self.bind_addr)
 		self.master_socket.listen(5)
 
-		tasklet.Tasklet.__init__(self, self.acceptor())
+		coroutine.Coroutine.__init__(self, self.acceptor())
 
 	def acceptor(self):
-		"""Main tasklet function.
+		"""Main coroutine function.
 
 		Continously calls accept() and creates new connection objects.
 		"""
@@ -323,7 +324,7 @@ class TCPServer(tasklet.Tasklet):
 					if exc[0] != errno.EAGAIN:
 						print "Error in accept(): %s" % exc
 
-					callback = tasklet.WaitForCallback("master readable")
+					callback = coroutine.WaitForCallback("master readable")
 					reactor.wait_for_readable(self, self.master_socket, callback)
 					yield callback
 				else:
