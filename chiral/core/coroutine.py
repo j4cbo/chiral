@@ -1,9 +1,11 @@
 """
 Chiral coroutine system.
 """
-# Copyright (c) 2007 Jacob Potter
-# UNRELEASED CODE. ALL RIGHTS RESERVED.
-# (this'll probably wind up GPL but don't do anything with it until the api is stable)
+
+# Chiral, copyright (c) 2007 Jacob Potter
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation, version 2.
 
 _CHIRAL_RELOADABLE = True
 

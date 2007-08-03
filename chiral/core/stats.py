@@ -6,6 +6,11 @@ increment() is called with a given key, the corresponding value is set to 1 if i
 already present, or incremented if it is present.
 """
 
+# Chiral, copyright (c) 2007 Jacob Potter
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation, version 2.
+
 try:
 	_STATS # pylint: disable-msg=W0104
 except NameError:
