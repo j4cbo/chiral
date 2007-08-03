@@ -326,29 +326,33 @@ class HTTPConnection(tcp.TCPConnection):
 			# If set_coro has been called, waiting_coro is a Coroutine that will
 			# complete once the response is done.
 			if waiting_coro:
-				coro, = waiting_coro
-				coro.start(force=False)
-				delayed_data = yield coroutine.WaitForCoroutine(coro)
-
 				try:
-					if len(delayed_data) == 1:
-						response.headers["Content-Length"] = len(str(delayed_data[0]))
-				except TypeError:
-					pass
+					coro, = waiting_coro
+					delayed_data = yield coroutine.WaitForCoroutine(coro)
 
-				# Iterate through and send any delayed data as well
-				if delayed_data:
-					for data in delayed_data:
-						# Ignore empty chunks
-						if not data:
-							continue
+					# See if we can set Content-Length 
+					try:
+						if type(delayed_data) in (list, tuple) and len(delayed_data) == 1:
+							response.headers["Content-Length"] = len(delayed_data[0])
+					except TypeError:
+						pass
 
-						# Add the headers, if not already sent
-						if not headers_sent:
-							headers_sent = True
-							data = response.render_headers() + data
+					# Iterate through and send any delayed data as well
+					if delayed_data:
+						for data in delayed_data:
+							# Ignore empty chunks
+							if not data:
+								continue
 
-						yield self.sendall(data)
+							# Add the headers, if not already sent
+							if not headers_sent:
+								headers_sent = True
+								data = response.render_headers() + data
+
+							yield self.sendall(data)
+				except Exception, exc:
+					exc_formatted = "<pre>%s</pre>" % html_quote(traceback.format_exc())
+					yield self.send_error("500 Internal Server Error", response, exc_formatted)
 
 			# If the waiting coro didn't return any data at all, send the headers already.
 			if not headers_sent:

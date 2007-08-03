@@ -78,9 +78,9 @@ def coroutine_page(include_get_vars=True):
 				conn = environ["chiral.http.connection"]
 				start_response("200 OK", {})
 
-				response_coro.result = [ retval ], None
+				return [ retval ], None
 
-			response_coro.set_completion_callback(completion_handler)
+			response_coro.add_completion_callback(completion_handler)
 
 			environ["chiral.http.set_coro"](response_coro)
 			return [""]

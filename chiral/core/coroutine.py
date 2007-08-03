@@ -298,18 +298,22 @@ class WaitForCoroutine(WaitCondition):
 	def bind(self, coro):
 		"""Bind to a given coroutine. See WaitCondition.bind() for documentation."""
 
+		self.waiting_coro.is_watched = True
+		self.waiting_coro.start(force = False)
+
 		if self.waiting_coro.state in (Coroutine.STATE_COMPLETED, Coroutine.STATE_FAILED):
 			# If waiting_coro has already returned, just return its state now.
 			return self.waiting_coro.result
 		else:
+			# Hasn't started yet se:
 			self.bound_coro = coro
-			self.waiting_coro.set_completion_callback(coro.resume)
+			self.waiting_coro.add_completion_callback(coro.resume)
 			return None
 		
 	def unbind(self):
 		"""Unbind from a given coroutine. See WaitCondition.unbind() for documentation."""
 		assert self.bound_coro
-		self.bound_coro.remove_completion_callback()
+		self.waiting_coro.remove_completion_callback(self.bound_coro.resume)
 		self.bound_coro = None
 
 	def __repr__(self):
@@ -341,12 +345,14 @@ class Coroutine(object):
 		self.state = self.STATE_STOPPED
 		self.result = None
 
-		self._completion_callback = default_callback
+		self.completion_callbacks = [ default_callback ] if default_callback else [ ]
 
 		self.gen = generator
 		self._gen_name = self.gen.gi_frame.f_code.co_name
 
 		self.wait_condition = None
+
+		self.is_watched = False
 
 		_COROUTINES[id(self)] = self
 
@@ -385,26 +391,37 @@ class Coroutine(object):
 
 				self.result = (result, None)
 
-				if self._completion_callback:
-					# Call the completion callback if available.
-					self._completion_callback(result, None)
-				break
-
-			except Exception, exc:
+			except Exception:
 				# An (unexpected) exception was thrown; terminate the coroutine.
 				self.state = self.STATE_FAILED
+				self.result = (None, sys.exc_info())
 
-				exc_info = sys.exc_info()
+			# If either of the two exception handlers fired, handle the completion callbacks.
+			if self.result is not None:
+				for callback in self.completion_callbacks:
+					try:
+						callback_result = callback(self.result[0], self.result[1])
 
-				self.result = (None, exc_info)
+						# Completion callbacks may modify the result of the coroutine
+						# by returning a tuple (to swallow exceptions, for example, or
+						# pass the result through some sort of filter).
 
-				if self._completion_callback:
-					# Call the completion callback if available.
-					self._completion_callback(None, exc_info)
-				else:
-					# Generally, coroutines with no handler failing is a sign
-					# of something going wrong, so print out a warning.
-					exc_type, exc_obj, exc_traceback = exc_info
+						if callback_result is not None:
+							self.result = callback_result
+
+					except Exception:
+						# If the completion callback itself raises an Exception, make
+						# it as if the coroutine failed with that exception.
+						self.result = (None, sys.exc_info())
+
+					if self.result[1] is None:
+						self.state = self.STATE_COMPLETED
+					else:
+						self.state = self.STATE_FAILED
+
+				if self.result[1] is not None and not self.is_watched:
+					# The exception was not handled, so log a warning.
+					exc_type, exc_obj, exc_traceback = self.result[1]
 					warnings.warn("Orphan coro %s failed: %s" % (
 						self, ''.join(traceback.format_exception(
 							exc_type, exc_obj, exc_traceback
@@ -412,6 +429,7 @@ class Coroutine(object):
 					))
 
 				break
+
 
 			if isinstance(gen_result, WaitCondition):
 				bind_result = gen_result.bind(self)
@@ -447,7 +465,7 @@ class Coroutine(object):
 		self.state = self.STATE_SUSPENDED
 		self.resume(None)
 
-	def set_completion_callback(self, callback):
+	def add_completion_callback(self, callback):
 		"""
 		Set callback as the completion callback for this coroutine.
 
@@ -457,21 +475,22 @@ class Coroutine(object):
 		None; if no exception was raised, the second parameter will be None rather than
 		a tuple.
 
-		If a completion callback has already been set, it must first be removed with
+		The callback may return a (value, exception) tuple, where value and exception are
+		as above, to modify the result of the coroutine.
+
+		Once a completion callback has been set, it may be removed with
 		remove_completion_callback.
 		"""
 
 		assert self.state not in (self.STATE_COMPLETED, self.STATE_FAILED)
-		assert self._completion_callback is None
-		self._completion_callback = callback
+		self.completion_callbacks.append(callback)
 
-	def remove_completion_callback(self):
+	def remove_completion_callback(self, callback):
 		"""
-		Remove the completion callback last set with set_completion_callback.
+		Remove a completion callback after it has been set with set_completion_callback().
 		"""
 
-		assert self._completion_callback is not None
-		self._completion_callback = None
+		self.completion_callbacks.remove(callback)
 
 	def __repr__(self):
 

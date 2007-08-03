@@ -133,7 +133,7 @@ class SelectReactor(Reactor):
 	@property
 	def applications(self):
 		"""All applications with events currently waiting in the reactor."""
-		apps = set(app for callback, app in self._read_sockets + self._write_sockets)
+		apps = set(app for callback, app in self._read_sockets.values() + self._write_sockets.values())
 		apps = apps | set(desc[2] for desc in self._events)
 		return apps
 
