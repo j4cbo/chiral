@@ -34,6 +34,7 @@ a `WaitForNothing`.
 _CHIRAL_RELOADABLE = True
 
 from decorator import decorator
+from collections import deque
 
 import sys
 import traceback
@@ -347,6 +348,95 @@ class WaitForCoroutine(WaitCondition):
 
 	def __repr__(self):
 		return "<WaitForCoroutine: for %s>" % self.waiting_coro
+
+class _CoroutineMutexManager(object):
+	"""Context manager for CoroutineMutex objects."""
+
+	# Context managers are opaque objects; they should not have any public methods.
+	#pylint: disable-msg=R0903
+
+	def __init__(self, mutex):
+		"""Constructor."""
+		self.mutex = mutex
+
+	def __enter__(self):
+		"""Called when the context manager is passed to the with statement."""
+		assert self.mutex.current_owner is self
+
+	def __exit__(self, _exc_type, _exc_value, _exc_tb):
+		"""Called when the with statement completes."""
+		self.mutex.current_owner = None
+		if len(self.mutex.queue) > 0:
+			# Start the next item in the queue: create a ContextManager and call it.
+			next_manager = _CoroutineMutexManager(self.mutex)
+			self.mutex.current_owner = next_manager
+			self.mutex.queue.popleft()(next_manager)
+
+class CoroutineMutex(object):
+	"""
+	An object that regulates access to a resource.
+
+	One CoroutineMutex represents one controlled-access resource. For example, a TCPConnection
+	giving access to a server may be protected by a WaitForMutex to ensure that multiple transactions
+	are not opened at once.
+
+	CoroutineMutex objects have one important method, `acquire()`. This returns a WaitCondition, which
+	will resule the coroutine once the mutex is available. The WaitCondition will result in a context
+	manager, as specified in PEP 342. It should immediately be passed to a ``with`` statement, like so::
+
+		with (yield connection.mutex.acquire()):
+			connection.sendall("command\r\n")
+			result = connection.read_line()
+
+	Note that in Python 2.5, the ``with`` statement requres ``from future import with_statement``.
+
+	Alternately, the context manager that results from yielding `acquire()` may be ignored, and `release()`
+	called to release the mutex. However, doing so reduces exception safety compared to the with statement
+	options (an unhandled exception could cause the mutex to never be released), so it is not reccomended.
+	"""
+
+	def __init__(self, description=None):
+		"""
+		Constructor.
+
+		The "description" parameter will be included in repr(); it is not otherwise used.
+		"""
+		self.description = description
+		self.current_owner = None
+		self.queue = deque()
+
+	@returns_waitcondition
+	def acquire(self):
+		"""
+		Attempt to acquire the mutex. Yields a WaitCondition which returns once the mutex is claimed.
+		"""
+
+		if self.current_owner is not None:
+			manager = _CoroutineMutexManager(self)
+			self.current_owner = manager
+			return WaitForNothing(manager)
+		else:
+			callback = WaitForCallback(description = repr(self))
+			self.queue.append(callback)
+			return callback
+
+	def release(self):
+		"""
+		Force the mutex to be released. Use with caution; the context manager is preferable.
+		"""
+		self.current_owner = None
+		if len(self.queue) > 0:
+			# Start the next item in the queue: create a ContextManager and call it.
+			next_manager = _CoroutineMutexManager(self)
+			self.current_owner = next_manager
+			self.queue.popleft()(next_manager)
+	
+	def __repr__(self):
+		if self.description:
+			return "<WaitForCallback %s>" % (self.description, )
+		else:
+			return "<WaitForCallback>"
+
 
 # Store a global list of all current coroutines. The try/except block
 # ensures that even if this module is reloaded, only one list of
