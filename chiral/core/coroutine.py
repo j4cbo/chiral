@@ -102,8 +102,8 @@ def _returns_waitcondition_dec(func, *args, **kwargs):
 
 	ret = func(*args, **kwargs) #pylint: disable-msg=W0142
 
-	if not isinstance(ret, WaitCondition):
-		ret = WaitForNothing(ret)
+	if ret is not None and not isinstance(ret, WaitCondition):
+		raise TypeError("%s should return a WaitCondition instance; got %s" % (func, ret))
 
 	return ret
 
@@ -112,13 +112,10 @@ def returns_waitcondition(func):
 	"""
 	Mark a function as returning a WaitCondition.
 
-	In optimized mode, this does not replace the function itself or modify its
-	return value. In debug mode, however, a wrapper function will be applied
-	which checks the return value. If it is not a WaitCondition, it will be
-	converted to a WaitForNothing object; this ensures that code does not attempt
-	to use the returned value directly.
+	When not running in optimized mode, the return value is checked, and a TypeError is
+	thrown if it is not a WaitCondition. In optimized mode, the function is not modified.
 
-	Additionally, the docstring will be amended to indicate that its return value
+	Additionally, the function docstring will be amended to indicate that its return value
 	should be expected to be a WaitCondition.
 	"""
 
@@ -183,6 +180,8 @@ class WaitForNothing(WaitCondition):
 	that one does not accidentally use its return values directly without yielding them from
 	inside a Coroutine.
 	"""
+
+	__slots__ = "data", 
 
 	def __init__(self, value=None, exc=None):
 		"""
@@ -460,25 +459,29 @@ class Coroutine(object):
 
 				break
 
+			if gen_result is None:
+				# Optimize handling None
+				next_value, next_exception = None, None
+				continue
 
-			if isinstance(gen_result, WaitCondition):
-				bind_result = gen_result.bind(self)
+			if not isinstance(gen_result, WaitCondition):
+				# The generator yielded a value that was not a WaitCondition
+				# instance. Treat it as another coroutine.
+				gen_result = WaitForCoroutine(Coroutine(gen_result))
 
-				if bind_result is not None:	
-					# The WaitCondition was already ready; use whatever value
-					# or exception it gave, and loop around.
-					next_value, next_exception = bind_result
-					continue
-				else:
-					# There's nothing else we can do now.
-					self.state = self.STATE_SUSPENDED
-					self.wait_condition = gen_result
-					break
+			bind_result = gen_result.bind(self)
 
-			# The generator yielded a value that was not a WaitCondition instance.
-			# Simply pass that back and run it again.
-			next_value = gen_result
-			next_exception = None
+			if bind_result is not None:	
+				# The WaitCondition was already ready; use whatever value
+				# or exception it gave, and loop around.
+				next_value, next_exception = bind_result
+				continue
+			else:
+				# There's nothing else we can do now.
+				self.state = self.STATE_SUSPENDED
+				self.wait_condition = gen_result
+				break
+
 
 	def start(self, force=True):
 		"""Begin running the coroutine.

@@ -82,7 +82,7 @@ class TCPConnection(coroutine.Coroutine):
 		# Check if the delimiter is already in the buffer.
 		if delimiter in self._buffer[:max_len]:
 			out, self._buffer = self._buffer.split(delimiter, 1)
-			return out
+			return coroutine.WaitForNothing(out)
 
 		# If not, attempt to recv()
 		try:
@@ -100,7 +100,7 @@ class TCPConnection(coroutine.Coroutine):
 		self._buffer += new_data
 		if delimiter in self._buffer[:max_len]:
 			out, self._buffer = self._buffer.split(delimiter, 1)
-			return out
+			return coroutine.WaitForNothing(out)
 
 		# No luck finding the delimiter. Make sure we haven't overflowed...
 		if len(self._buffer) > max_len:
@@ -170,7 +170,7 @@ class TCPConnection(coroutine.Coroutine):
 			cb_func(self, self.remote_sock, blocked_operation_handler)
 			return callback
 
-		return res
+		return coroutine.WaitForNothing(res)
 
 	@coroutine.returns_waitcondition
 	def recv(self, buflen, try_now=True):
@@ -272,7 +272,7 @@ class TCPConnection(coroutine.Coroutine):
 				raise exc
 
 		# sendfile() worked, so we're done.
-		return res[1]
+		return coroutine.WaitForNothing(res[1])
 
 	def __init__(self, sock, addr, server=None):
 
