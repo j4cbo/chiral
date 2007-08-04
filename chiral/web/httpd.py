@@ -219,10 +219,7 @@ class HTTPConnection(tcp.TCPConnection):
 				(protocol == "HTTP/1.0" and connection_header == "keep-alive")
 			)
 
-			def write(data):
-				"""Bogus write method for WSGI applications."""
-				# AWW HELL NAW
-				raise NotImplementedError
+			write_data_buffer = StringIO()
 
 			def start_response(status, response_headers, exc_info=None):
 				"""start_response() callback for WSGI applications"""
@@ -238,7 +235,7 @@ class HTTPConnection(tcp.TCPConnection):
 					response.status = "500 Internal Server Error"
 					exc_info = None
 
-				return write
+				return write_data_buffer.write
 
 			# Invoke the application.
 			try:
@@ -292,6 +289,12 @@ class HTTPConnection(tcp.TCPConnection):
 				# And we're now done with this request.
 				continue
 
+			# Did they use write()?
+			write_data = write_data_buffer.getvalue()
+			if write_data:
+				headers_sent = True
+				yield self.sendall(response.render_headers() + write_data)
+			
 			# Iterate through the result chunks provided by the application.
 			res_iter = iter(result)
 			headers_sent = False
@@ -355,7 +358,7 @@ class HTTPConnection(tcp.TCPConnection):
 								data = response.render_headers() + data
 
 							yield self.sendall(data)
-				except Exception, exc:
+				except Exception:
 					exc_formatted = "<pre>%s</pre>" % html_quote(traceback.format_exc())
 					yield self.send_error("500 Internal Server Error", response, exc_formatted)
 
