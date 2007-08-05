@@ -1,21 +1,39 @@
-"""Thread pool."""
+"""
+Thread pool.
+
+This provides a pool of threads to which any callable may be passed from a coroutine.
+Example::
+
+	@as_coro
+	def threadpool_test():
+	        yield threadpool.run_in_thread(time.sleep, 1)
+"""
 
 from __future__ import with_statement
 
-import Queue
 import collections
 import threading
 import socket
 import sys
+import signal
 
 from chiral.core.coroutine import returns_waitcondition, WaitForCallback
 from chiral.net import tcp
 
+# _QUEUE_LOCK regulates access to all the queues, and must be acquired before doing
+# any manipulation on them. The lock is held only for the duration of the manipulation.
 _QUEUE_LOCK = threading.Lock()
 
-_INPUT_QUEUE = Queue.Queue()
+# _INPUT_QUEUE_SEM holds the number of items in the input queue. A Queue cannot be used
+# here, because moving an operation from the input queue to the active state
+# (_ACTIVE_WORKERS) must be atomic.
+_INPUT_QUEUE = collections.deque()
+_INPUT_QUEUE_SEM = threading.Semaphore(0)
+
 _ACTIVE_WORKERS = 0
 _OUTPUT_QUEUE = collections.deque()
+
+_WORKER_THREADS = []
 
 class ThreadPoolWatcher(tcp.TCPConnection):
 	"""
@@ -27,12 +45,16 @@ class ThreadPoolWatcher(tcp.TCPConnection):
 		"""Constructor."""
 		read_socket, self.write_socket = socket.socketpair()
 
-		self.restart = None
+		self.restart = WaitForCallback("ThreadPoolWatcher restart")
 
 		tcp.TCPConnection.__init__(self, read_socket, None)
 		self.start()
 
 	def connection_handler(self):
+		# Wait until we're needed the first time
+		yield self.restart
+		self.restart = None
+
 		while True:
 			incoming = yield self.recv(128)
 			for _index in incoming:
@@ -58,6 +80,7 @@ class WorkerThread(threading.Thread):
 	def __init__(self):
 		"""Constructor."""
 		threading.Thread.__init__(self)
+		self.setDaemon(True)
 
 	def run(self):
 		"""Main loop for worker threads."""
@@ -66,8 +89,9 @@ class WorkerThread(threading.Thread):
 		while True:
 			# Retrieve an operation from the queue, run it, and put the result in
 			# the output queue
+			_INPUT_QUEUE_SEM.acquire()
 			with _QUEUE_LOCK:
-				operation, args, kwargs, recipient = _INPUT_QUEUE.get()
+				operation, args, kwargs, recipient = _INPUT_QUEUE.popleft()
 				_ACTIVE_WORKERS += 1
 
 			try:
@@ -78,18 +102,24 @@ class WorkerThread(threading.Thread):
 			with _QUEUE_LOCK:
 				_OUTPUT_QUEUE.append((result, exc, recipient))
 				_ACTIVE_WORKERS -= 1
-				_WATCHER.write_socket.write("x")
+				_WATCHER.write_socket.send("x")
+
 
 @returns_waitcondition
 def run_in_thread(operation, *args, **kwargs):
-	"""Run operation(*args, **kwargs) in a thread; return the result."""
+	"""Run operation(*args, **kwargs) in a thread, returning the result."""
 
-	# XXX decide whether or not we should spawn a new thread here
+	# XXX spawn additional threads?
+	if not _WORKER_THREADS:
+		worker = WorkerThread()
+		worker.start()
+		_WORKER_THREADS.append(worker)
 
 	recipient = WaitForCallback("run_in_thread %r" % (operation, ))
 
 	with _QUEUE_LOCK:
-		_INPUT_QUEUE.put((operation, args, kwargs, recipient))
+		_INPUT_QUEUE.append((operation, args, kwargs, recipient))
+		_INPUT_QUEUE_SEM.release()
 
 	# Restart the ThreadPoolWatcher if it wasn't listening already
 	if _WATCHER.restart:
@@ -98,3 +128,4 @@ def run_in_thread(operation, *args, **kwargs):
 	return recipient
 
 __all__ = [ "run_in_thread" ]
+
