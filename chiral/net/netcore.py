@@ -57,8 +57,6 @@ class Reactor(object):
 			if not res:
 				break
 
-		print "Done."
-
 		close_list = list(self._close_list.itervalues())
 		for sock in close_list:
 			sock.close()

@@ -82,7 +82,7 @@ def _as_coro_waitcondition_dec(gen, *args, **kwargs):
 	"""Implementation of as_coro_waitcondition."""
 	# This is a separate function because the decorator module (@decorator) does not provide
 	# for modification of the decorated function docstring.
-	return WaitForCoroutine(Coroutine(gen(*args, **kwargs))) #pylint: disable-msg=W0142
+	return WaitForCoroutine(Coroutine(gen(*args, **kwargs), autostart = False)) #pylint: disable-msg=W0142
 
 def as_coro_waitcondition(func):
 	"""
