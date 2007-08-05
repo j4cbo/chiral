@@ -1,12 +1,14 @@
 #!/usr/bin/env python
 
 """
-client module for memcached (memory cache daemon)
+Client module for memcached (memory cache daemon)
 
 Overview
 ========
 
 See U{the MemCached homepage<http://www.danga.com/memcached>} for more about memcached.
+
+This is the Chiral version of the memcached client, modified to make use of coroutines.
 
 Usage summary
 =============
@@ -17,22 +19,22 @@ This should give you a feel for how this module operates::
 	mc = memcache.Client(['127.0.0.1:11211'], debug=0)
 
 	mc.set("some_key", "Some value")
-	value = mc.get("some_key")
+	value = yield mc.get("some_key")
 
-	mc.set("another_key", 3)
-	mc.delete("another_key")
+	yield mc.set("another_key", 3)
+	yield mc.delete("another_key")
 
-	mc.set("key", "1")   # note that the key used for incr/decr must be a string.
-	mc.incr("key")
-	mc.decr("key")
+	yield mc.set("key", "1")   # note that the key used for incr/decr must be a string.
+	yield mc.incr("key")
+	yield mc.decr("key")
 
 The standard way to use memcache with a database is like this::
 
 	key = derive_key(obj)
-	obj = mc.get(key)
+	obj = yield mc.get(key)
 	if not obj:
-		obj = backend_api.get(...)
-		mc.set(obj)
+		obj = yield backend_api.get(...)
+		yield mc.set(obj)
 
 	# we now have obj, and future passes through this code
 	# will use the object from the cache.
@@ -43,13 +45,14 @@ Detailed Documentation
 More detailed documentation is available in the L{Client} class.
 """
 
-from chiral.core.coroutine import returns_waitcondition, as_coro_waitcondition
-from chiral.net import tcp
+from chiral.core.coroutine import Coroutine, returns_waitcondition, as_coro_waitcondition
+from chiral.net import tcp, reactor
+
+from decorator import decorator
 
 import sys
 import socket
 import time
-import types
 try:
 	import cPickle as pickle
 except ImportError:
@@ -66,21 +69,18 @@ except ImportError:
 		raise ValueError("received compressed data but I don't support compession (import error)")
 
 from binascii import crc32   # zlib version is not cross-platform
-serverHashFunction = crc32
 
 __author__	= "Evan Martin <martine@danga.com>"
-__version__ = "1.37"
+__version__ = "1.00"
 __copyright__ = "Copyright (C) 2003 Danga Interactive"
 __license__   = "Python"
 
 SERVER_MAX_KEY_LENGTH = 250
-#  Storing values larger than 1MB requires recompiling memcached.  If you do,
-#  this value can be changed by doing "memcache.SERVER_MAX_VALUE_LENGTH = N"
-#  after importing this module.
-SERVER_MAX_VALUE_LENGTH = 1024*1024
 
-class _Error(Exception):
-	pass
+# Storing values larger than 1MB requires recompiling memcached.  If you do,
+# this value can be changed by doing "memcache.SERVER_MAX_VALUE_LENGTH = N"
+# after importing this module.
+SERVER_MAX_VALUE_LENGTH = 1024*1024
 
 from threading import local
 
@@ -98,12 +98,12 @@ class Client(local):
 		   example, to keep all of a given user's objects on the same memcache
 		   server, so you could use the user's unique id as the hash value.
 
-	@group Setup: __init__, set_servers, forget_dead_hosts, disconnect_all, debuglog
+	@group Setup: __init__, set_servers, forget_dead_hosts, disconnect_all
 	@group Insertion: set, add, replace, set_multi
 	@group Retrieval: get, get_multi
 	@group Integers: incr, decr
 	@group Removal: delete, delete_multi
-	@sort: __init__, set_servers, forget_dead_hosts, disconnect_all, debuglog,\
+	@sort: __init__, set_servers, forget_dead_hosts, disconnect_all, \
 		set, set_multi, add, replace, get, get_multi, incr, decr, delete, delete_multi
 	"""
 
@@ -127,7 +127,7 @@ class Client(local):
 		"""Key contains invalid characters."""
 		pass
 
-	def __init__(self, servers, debug=0):
+	def __init__(self, servers, debug=False):
 		"""
 		Create a new Client object with the given list of servers.
 
@@ -138,11 +138,12 @@ class Client(local):
 
 		local.__init__(self)
 
+		self.debug = debug
+
 		self.servers = []
 		self.buckets = []
 
 		self.set_servers(servers)
-		self.debug = debug
 		self.stats = {}
 
 	def set_servers(self, servers):
@@ -167,7 +168,7 @@ class Client(local):
 			else:
 				server_addr, weight = server_desc, 1
 
-			server = _ServerConnection(server_addr, weight, self.debuglog)
+			server = _ServerConnection(server_addr, weight, self._debuglog)
 
 			self.servers.append(server)
 
@@ -199,7 +200,8 @@ class Client(local):
 			yield server.sendeall("flush_all")
 			yield server.read_line()
 
-	def debuglog(self, string):
+	def _debuglog(self, string):
+		"""Log string to debugging output, if enabled."""
 		if self.debug:
 			sys.stderr.write("MemCached: %s\n" % string)
 
@@ -214,7 +216,7 @@ class Client(local):
 		if type(key) == tuple:
 			serverhash, key = key
 		else:
-			serverhash = serverHashFunction(key)
+			serverhash = crc32(key)
 
 		for i in range(Client._SERVER_RETRIES):
 			server = self.buckets[serverhash % len(self.buckets)]
@@ -223,13 +225,14 @@ class Client(local):
 				#print "(using server %s)" % server,
 			return server, key
 
-			serverhash = serverHashFunction(str(serverhash) + str(i))
+			serverhash = crc32(str(serverhash) + str(i))
 
 		return None, None
 
 	def disconnect_all(self):
+		"""Disconnect all servers."""
 		for server in self.servers:
-			server.close_socket()
+			server.close()
 
 	@as_coro_waitcondition
 	def delete(self, key, dead_time=0):
@@ -255,7 +258,7 @@ class Client(local):
 
 			res = yield server.read_line()
 			if res != "DELETED":
-				self.debuglog("expected 'DELETED', got %r" % (res, ))
+				self._debuglog("expected 'DELETED', got %r" % (res, ))
 				raise StopIteration(False)
 
 			raise StopIteration(True)
@@ -305,6 +308,7 @@ class Client(local):
 
 	@as_coro_waitcondition
 	def _incrdecr(self, cmd, key, delta):
+		"""Helper function for handling incr and decr."""
 		check_key(key)
 		server, key = self._get_server_for(key)
 		if not server:
@@ -371,6 +375,33 @@ class Client(local):
 		"""
 		return self._set("set", key, val, expiry_time, min_compress_len)
 
+	@as_coro_waitcondition
+	def _set(self, cmd, key, val, expiry_time, min_compress_len = 0):
+		"""Helper function for add, set, replace"""
+		check_key(key)
+		server, key = self._get_server_for(key)
+		if not server:
+			raise StopIteration(False)
+
+		stored_info = self._value_to_stored(val, min_compress_len)
+		if stored_info is None:
+			# If it's not storable due to length, just return.
+			raise StopIteration(True)
+		flags, stored = stored_info
+		
+
+		full_cmd = "%s %s %d %d %d\r\n%s\r\n" % (cmd, key, flags, expiry_time, len(stored), stored)
+
+		try:
+			yield server.sendall(full_cmd)
+			res = yield server.read_line()
+			raise StopIteration(res == "STORED")
+
+		except socket.error, exc:
+			server.mark_dead(exc[1])
+
+		raise StopIteration(False)
+
 
 	def _map_keys_to_servers(self, key_iterable, key_prefix):
 		"""
@@ -417,7 +448,7 @@ class Client(local):
 
 		return server_keys, deprefix
 
-	def get_multi(self, mapping, key_prefix=''):
+	def get_multi(self, keys, key_prefix=''):
 		"""
 		Retrieves multiple keys from the memcache doing just one query.
 
@@ -455,7 +486,7 @@ class Client(local):
 
 		"""
 
-		server_keys, deprefix = self._map_keys_to_servers(mapping.iterkeys(), key_prefix)
+		server_keys, deprefix = self._map_keys_to_servers(keys, key_prefix)
 
 		# send out all requests on each server before reading anything
 		dead_servers = []
@@ -481,7 +512,7 @@ class Client(local):
 					if line[:5] == "VALUE":
 						_resp, rkey, flags, data_len = line.split()
 						value = self._parse_value(
-							(yield self.read_exactly(int(data_len) + 2))[:-2],
+							(yield server.read_exactly(int(data_len) + 2))[:-2],
 							int(flags)
 						)
 
@@ -489,7 +520,7 @@ class Client(local):
 
 					line = yield server.read_line()
 
-			except (_Error, socket.error), exc:
+			except socket.error, exc:
 				server.mark_dead(exc)
 
 		raise StopIteration(retvals)
@@ -543,8 +574,13 @@ class Client(local):
 
 		for server in server_keys.iterkeys():
 			commands = []
-			for prefixed_key, original_key in server_keys[server]: # These are mangled keys
-				flags, stored = self._val_to_stored(mapping[original_key], min_compress_len)
+			for prefixed_key, original_key in server_keys[server]:
+				stored_info = self._value_to_stored(mapping[original_key], min_compress_len)
+				if stored_info is None:
+					# If it's not storable due to length, just ignore it
+					continue
+
+				flags, stored = stored_info
 				commands.append("set %s %d %d %d\r\n%s\r\n" % (
 					prefixed_key,
 					flags,
@@ -572,7 +608,7 @@ class Client(local):
 						continue
 					else:
 						notstored.append(deprefix[key]) #un-mangle.
-			except (_Error, socket.error), exc:
+			except socket.error, exc:
 				server.mark_dead(exc)
 
 		raise StopIteration(notstored)
@@ -632,7 +668,7 @@ class Client(local):
 				for _key in keys:
 					res = yield server.read_line()
 					if res != "DELETED":
-						self.debuglog("expected 'DELETED', got %r" % (res, ))
+						self._debuglog("expected 'DELETED', got %r" % (res, ))
 			except socket.error, exc:
 				server.mark_dead(exc)
 				ret = False
@@ -664,7 +700,7 @@ class Client(local):
 
 		# silently do not store if value length exceeds maximum
 		if len(value) >= SERVER_MAX_VALUE_LENGTH:
-			return 0
+			return None
 
 		if min_compress_len and _SUPPORTS_COMPRESS and len(value) > min_compress_len:
 			# Try compressing
@@ -676,27 +712,6 @@ class Client(local):
 				value = compressed_value
 
 		return flags, value
-
-	@as_coro_waitcondition
-	def _set(self, cmd, key, val, expiry_time, min_compress_len = 0):
-		check_key(key)
-		server, key = self._get_server_for(key)
-		if not server:
-			raise StopIteration(0)
-
-		flags, stored = self._value_to_stored(val, min_compress_len)
-
-		full_cmd = "%s %s %d %d %d\r\n%s\r\n" % (cmd, key, flags, expiry_time, len(stored), stored)
-
-		try:
-			yield server.sendall(full_cmd)
-			res = yield server.read_line()
-			raise StopIteration(res == "STORED")
-
-		except socket.error, exc:
-			server.mark_dead(exc[1])
-
-		raise StopIteration(False)
 
 	@as_coro_waitcondition
 	def get(self, key):
@@ -715,15 +730,17 @@ class Client(local):
 			if line[:5] == "VALUE":
 				_resp, _rkey, flags, data_len = line.split()
 				value = self._parse_value(
-					(yield self.read_exactly(int(data_len) + 2))[:-2],
+					(yield server.read_exactly(int(data_len) + 2))[:-2],
 					int(flags)
 				)
 
 				res = yield server.read_line()
 				if res != "END":
-					self.debuglog("expected 'END', got %r" % (res, ))
+					self._debuglog("expected 'END', got %r" % (res, ))
+			else:
+				value = None
 
-		except (_Error, socket.error), msg:
+		except socket.error, msg:
 			if type(msg) is tuple:
 				msg = msg[1]
 			server.mark_dead(msg)
@@ -733,8 +750,9 @@ class Client(local):
 
 
 	def _parse_value(self, data, flags):
+		"""Return the object that was orignally stored based on its data and flags."""
 
-		if data & Client._FLAG_COMPRESSED:
+		if flags & Client._FLAG_COMPRESSED:
 			data = decompress(data)
 
 		if  flags == 0 or flags == Client._FLAG_COMPRESSED:
@@ -748,10 +766,10 @@ class Client(local):
 			try:
 				value = pickle.loads(data)
 			except Exception:
-				self.debuglog('Pickle error...\n')
+				self._debuglog('Pickle error...\n')
 				value = None
 		else:
-			self.debuglog("unknown flags on get: %x\n" % flags)
+			self._debuglog("unknown flags on get: %x\n" % flags)
 
 		return value
 
@@ -761,7 +779,7 @@ class _ServerConnection(tcp.TCPConnection):
 
 	_DEAD_RETRY = 30  # number of seconds before retrying a dead server.
 
-	def __init__(self, host, weight = 1, debugfunc = None):
+	def __init__(self, host, weight, debugfunc):
 		"""Initialize the _ServerConnection to the specified host."""
 
 		self.weight = weight
@@ -772,10 +790,8 @@ class _ServerConnection(tcp.TCPConnection):
 		else:
 			self.addr = (host, 11211)
 
-		if not debugfunc:
-			debugfunc = lambda x: None
-
 		self.debuglog = debugfunc
+
 		self.deaduntil = 0
 
 		sock = socket.socket()
@@ -840,8 +856,8 @@ def check_key(key, key_extra_len=0):
 	"""
 	Checks sanity of key.  Fails if:
 
-	- Key length is > SERVER_MAX_KEY_LENGTH (Raises MemcachedKeyLength).
-	- Contains control characters  (Raises MemcachedKeyCharacterError).
+	- Key length is > SERVER_MAX_KEY_LENGTH (Raises ValueError)
+	- Contains control characters  (Raises ValueError)
 	- Is not a string (Raises TypeError)
 	"""
 
@@ -849,141 +865,126 @@ def check_key(key, key_extra_len=0):
 		raise TypeError("Keys must be of type str, not unicode.")
 
 	if len(key) + key_extra_len > SERVER_MAX_KEY_LENGTH:
-		raise Client.MemcachedKeyLengthError("Key length is > %s" % SERVER_MAX_KEY_LENGTH)
+		raise ValueError("Key length is > %s" % SERVER_MAX_KEY_LENGTH)
 
 	for char in key:
 		if ord(char) < 33:
-			raise Client.MemcachedKeyCharacterError("Control characters not allowed")
+			raise ValueError("Control characters not allowed")
 
 def _doctest():
 	import doctest, memcache
 	servers = ["127.0.0.1:11211"]
-	mc = Client(servers, debug=1)
-	globs = {"mc": mc}
+	connection = Client(servers, debug=True)
+	globs = {"mc": connection}
 	return doctest.testmod(memcache, globs=globs)
+
+
+
+import unittest
+
+@decorator
+def _coro_test_wrapper(func, self):
+	"""Run the test to set things up, then start the reactor."""
+	coro = Coroutine(func(self), is_watched = True)
+	reactor.run()
+
+	if coro.state != coro.STATE_COMPLETED:
+		exc_type, exc_value, exc_traceback = coro.result[1]
+		raise exc_type, exc_value, exc_traceback
+
+class _MemcachedTests(unittest.TestCase):
+	def setUp(self):
+		"""Set up the connection"""
+		self.conn = Client(["127.0.0.1:11211"], debug = 1)
+
+	@as_coro_waitcondition
+	def check_setget(self, key, value):
+		"""Check that getting, setting, and deleting an object work as expected."""
+
+		yield self.conn.set(key, value)
+
+		new_value = yield self.conn.get(key)
+		self.assertEqual(new_value, value)
+
+		self.assert_((yield self.conn.delete(key)))
+
+		new_value = yield self.conn.get(key)
+		self.assertEqual(new_value, None)
+
+	@_coro_test_wrapper
+	def test_basic_types(self):
+		"""Test set, get, and delete commands on strings, numbers, and objects"""
+		yield self.check_setget("a_string", "some random string")
+		yield self.check_setget("an_integer", 42)
+		yield self.check_setget("a_long", long(1<<30))
+		yield self.check_setget("a_dict", { "foo" : "bar", "baz" : "quux" })
+
+	@_coro_test_wrapper
+	def test_unknown(self):
+		"""Test that getting an undefined value results in None"""
+		unknown_value = yield self.conn.get("unknown_value")
+		self.assertEqual(unknown_value, None)
+
+	@_coro_test_wrapper
+	def test_incrdecr(self):
+		"""Test incr and decr functions"""
+		yield self.conn.set("an_integer", 42)
+
+		self.assertEqual((yield self.conn.incr("an_integer", 1)), 43)
+		self.assertEqual((yield self.conn.decr("an_integer", 1)), 42)
+
+	@_coro_test_wrapper
+	def test_invalid_keys(self):
+		"""Check that invalid keys raise the appropriate exception"""
+
+		try:
+			yield self.conn.set("this has spaces", 1)
+		except ValueError:
+			pass
+		else:
+			self.fail("key with spaces did not raise ValueError")
+
+		try:
+			yield self.conn.set("\x10control\x02characters\x11", 1)
+		except ValueError:
+			pass
+		else:
+			self.fail("key with control characters did not raise ValueError")
+
+		try:
+			yield self.conn.set("a" * (SERVER_MAX_KEY_LENGTH + 1), 1)
+		except ValueError:
+			pass
+		else:
+			self.fail("long key did not raise ValueError")
+
+		try:
+			yield self.conn.set(u"unicode\u4f1a", 1)
+		except TypeError:
+			pass
+		else:
+			self.fail("unicode key did not raise ValueError")
+
+	@_coro_test_wrapper
+	def test_get_multi(self):
+		"""Check that get_multi works as expected"""
+		yield self.conn.set("an_integer", 42)
+		yield self.conn.set("a_string", "hello")
+
+		res = yield self.conn.get_multi([ "a_string", "an_integer" ])
+
+		self.assertEquals(res, { "a_string": "hello", "an_integer": 42 })
+
+	@_coro_test_wrapper
+	def test_large_value(self):
+		"""Check that we do not attempt to send values larger than the server maximum"""
+		yield self.conn.set("big_string", "a" * SERVER_MAX_VALUE_LENGTH)
+		res = yield self.conn.get("big_string")
+
+		self.assertEquals(res, None)
 
 if __name__ == "__main__":
 	print "Testing docstrings..."
-	_doctest()
+	#_doctest()
 	print "Running tests:"
-	print
-	#servers = ["127.0.0.1:11211", "127.0.0.1:11212"]
-	test_servers = ["127.0.0.1:11211"]
-	mc = Client(test_servers, debug=1)
-
-	def to_s(val):
-		if not isinstance(val, types.StringTypes):
-			return "%s (%s)" % (val, type(val))
-		return "%s" % val
-	def test_setget(key, val):
-		print "Testing set/get {'%s': %s} ..." % (to_s(key), to_s(val)),
-		mc.set(key, val)
-		newval = mc.get(key)
-		if newval == val:
-			print "OK"
-			return 1
-		else:
-			print "FAIL"
-			return 0
-
-
-	class FooStruct:
-		def __init__(self):
-			self.bar = "baz"
-		def __str__(self):
-			return "A FooStruct"
-		def __eq__(self, other):
-			if isinstance(other, FooStruct):
-				return self.bar == other.bar
-			return 0
-
-	test_setget("a_string", "some random string")
-	test_setget("an_integer", 42)
-	if test_setget("long", long(1<<30)):
-		print "Testing delete ...",
-		if mc.delete("long"):
-			print "OK"
-		else:
-			print "FAIL"
-	print "Testing get_multi ...",
-	print mc.get_multi(["a_string", "an_integer"])
-
-	print "Testing get(unknown value) ...",
-	print to_s(mc.get("unknown_value"))
-
-	f = FooStruct()
-	test_setget("foostruct", f)
-
-	print "Testing incr ...",
-	if mc.incr("an_integer", 1) == 43:
-		print "OK"
-	else:
-		print "FAIL"
-
-	print "Testing decr ...",
-	if mc.decr("an_integer", 1) == 42:
-		print "OK"
-	else:
-		print "FAIL"
-
-	# sanity tests
-	print "Testing sending spaces...",
-	try:
-		mc.set("this has spaces", 1)
-	except Client.MemcachedKeyCharacterError:
-		print "OK"
-	else:
-		print "FAIL"
-
-	print "Testing sending control characters...",
-	try:
-		mc.set("this\x10has\x11control characters\x02", 1)
-	except Client.MemcachedKeyCharacterError:
-		print "OK"
-	else:
-		print "FAIL"
-
-	print "Testing using insanely long key...",
-	try:
-		mc.set('a'*SERVER_MAX_KEY_LENGTH + 'aaaa', 1)
-	except Client.MemcachedKeyLengthError:
-		print "OK"
-	else:
-		print "FAIL"
-
-	print "Testing sending a unicode-string key...",
-	try:
-		mc.set(u'keyhere', 1)
-	except TypeError:
-		print "OK",
-	else:
-		print "FAIL",
-	try:
-		mc.set((u'a'*SERVER_MAX_KEY_LENGTH).encode('utf-8'), 1)
-	except:
-		print "FAIL",
-	else:
-		print "OK",
-	import pickle
-	s = pickle.loads('V\\u4f1a\np0\n.')
-	try:
-		mc.set((s*SERVER_MAX_KEY_LENGTH).encode('utf-8'), 1)
-	except Client.MemcachedKeyLengthError:
-		print "OK"
-	else:
-		print "FAIL"
-
-	print "Testing using a value larger than the memcached value limit...",
-	mc.set('keyhere', 'a'*SERVER_MAX_VALUE_LENGTH)
-	if mc.get('keyhere') == None:
-		print "OK",
-	else:
-		print "FAIL",
-	mc.set('keyhere', 'a'*SERVER_MAX_VALUE_LENGTH + 'aaa')
-	if mc.get('keyhere') == None:
-		print "OK"
-	else:
-		print "FAIL"
-
-
-# vim: ts=4 sw=4 et :
+	unittest.main()
