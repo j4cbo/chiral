@@ -272,7 +272,7 @@ class BusConnection(tcp.TCPConnection):
 
 		# OK, we have our socket. The next step is authentication, which is done inside
 		# connection_handler, so go ahead and start the connection now. 
-		tcp.TCPConnection.__init__(self, sock, None)
+		tcp.TCPConnection.__init__(self, None, sock)
 		self.start()
 
 			

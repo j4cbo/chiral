@@ -7,6 +7,9 @@
 
 from chiral.core import coroutine
 from chiral.net import reactor
+from chiral.net.netcore import ConnectionException, ConnectionClosedException
+
+import os
 import sys
 import socket
 import errno
@@ -21,13 +24,8 @@ try:
 except ImportError:
 	_SENDFILE_AVAILABLE = False
 
-class ConnectionOverflowException(Exception):
-	"""Indicates that an excessive amount of data was received without line terminators."""
-	pass
-
-class ConnectionClosedException(Exception):
-	"""Indicates that the connection was closed."""
-	pass
+class ConnectionOverflowException(ConnectionException):
+	"""Indicates that an excessive amount of data was received by read_line()."""
 
 class TCPConnection(coroutine.Coroutine):
 	"""
@@ -43,7 +41,23 @@ class TCPConnection(coroutine.Coroutine):
 		"""
 		raise NotImplementedError
 
-	def close(self, *args):
+	def connection_handler_completed(self, value, exception):
+		"""
+		Completion callback.
+
+		This will be run as a completion callback when the connection handler 
+		terminates; see ``chiral.core.coroutine.Coroutine.add_completion_callback()``.
+
+		By default, this swallows ConnectionClosedException objects, and otherwise
+		does nothing. It may be overridden in a derived class.
+		"""
+
+		if exception:
+			_exc_type, exc_value, _exc_traceback = exception
+			if isinstance(exc_value, ConnectionClosedException):
+				return (None, None)
+
+	def close(self):
 		"""
 		Call self.close() on a connection to perform a clean shutdown.
 		"""
@@ -204,7 +218,7 @@ class TCPConnection(coroutine.Coroutine):
 		try:
 			res = self.remote_sock.send(data)
 		except socket.error, exc:
-			if exc[0] == errno.EPIPE:
+			if exc[0] in (errno.EPIPE, errno.EBADF):
 				raise ConnectionClosedException()
 			elif exc[0] != errno.EAGAIN:
 				raise exc
@@ -261,6 +275,11 @@ class TCPConnection(coroutine.Coroutine):
 					# pylint: disable-msg=W0703
 					try:
 						res = sendfile(self.remote_sock.fileno(), infile.fileno(), offset, length)
+					except OSError, exc:
+						if exc.errno in (errno.EPIPE, errno.EBADF):
+							callback.throw(ConnectionClosedException())
+						else:
+							callback.throw(exc)
 					except Exception, exc:
 						callback.throw(exc)
 					else:
@@ -268,16 +287,78 @@ class TCPConnection(coroutine.Coroutine):
 
 				reactor.wait_for_writeable(self, self.remote_sock, blocked_operation_handler)
 				return callback
+			elif exc.errno in (errno.EPIPE, errno.EBADF):
+				raise ConnectionClosedException()
 			else:
 				raise exc
 
 		# sendfile() worked, so we're done.
 		return coroutine.WaitForNothing(res[1])
 
-	def __init__(self, sock, addr, server=None):
+	@coroutine.returns_waitcondition
+	def connect(self):
+		"""
+		Connect or reconnect to the remote server.
 
-		self.remote_sock = sock
-		self.remote_addr = addr
+		If this TCPConnection was created by passing an existing socket object to __init__,
+		then connect() cannot be used and will raise RuntimeError.
+
+		Otherwise, the TCPConnection must be connected with connect() before it can be used,
+		and may be reconnected after any method raises a ConnectionClosedException.
+		"""
+
+		if not self._may_connect:
+			raise RuntimeError("This TCPConnection may not be reconnected.")
+
+		self.remote_sock.close()
+		self.remote_sock = socket.socket()
+
+		try:
+			self.remote_sock.connect(self.remote_addr)
+		except socket.error, exc:
+			if exc[0] == errno.EINPROGRESS:
+				# The socket is connecting.
+
+				callback = coroutine.WaitForCallback("connect")
+
+				def blocked_connect_handler():
+					"""Callback for asynchronous connect"""
+					res = self.remote_sock.getsockopt(socket.SOL_SOCKET, socket.SO_ERROR)
+					if res == 0:
+						callback()
+					else:
+						callback.throw(ConnectionException(res, os.strerror(res)))
+
+				# Wait for the connection to go through
+				reactor.wait_for_writeable(self, self.remote_sock, blocked_connect_handler)
+
+			elif exc[0] == errno.ECONNREFUSED:
+				raise ConnectionException(errno.ECONNREFUSED, "Connection refused")
+			else:
+				raise exc
+		else:
+			return coroutine.WaitForNothing()
+
+	def __init__(self, remote_addr, sock=None, server=None):
+		"""
+		Constructor.
+
+		If the corresponding socket has already been created and connected, i.e. by a
+		TCPServer calling `socket.accept()`, then it should be passed in as ``sock``.
+		Otherwise, a new socket is created. The TCPConnection is then in an
+		unconnected state; to connect to remote_addr, call `connect()` on the
+		TCPConnection.
+		"""
+		
+		self.remote_addr = remote_addr
+
+		if sock:
+			self.remote_sock = sock
+			self._may_connect = False
+		else:
+			self.remote_sock = socket.socket()
+			self._may_connect = True
+
 		self.server = server
 
 		# Set the socket nonblocking. Socket objects have some magic that
@@ -286,7 +367,12 @@ class TCPConnection(coroutine.Coroutine):
 
 		self._buffer = ""
 
-		coroutine.Coroutine.__init__(self, self.connection_handler(), autostart=False)
+		coroutine.Coroutine.__init__(
+			self,
+			self.connection_handler(),
+			autostart = False,
+			default_callback = self.connection_handler_completed
+		)
 
 class TCPServer(coroutine.Coroutine):
 	"""
@@ -336,13 +422,14 @@ class TCPServer(coroutine.Coroutine):
 					break
 
 			# Create a new TCPConnection for the socket 
-			new_conn = self.connection_class(client_socket, client_addr, self)
+			new_conn = self.connection_class(client_addr, client_socket, self)
 			self.connections[id(new_conn)] = new_conn
 			new_conn.start()
 
 __all__ = [
 	"TCPServer",
 	"TCPConnection",
+	"ConnectionException",
 	"ConnectionClosedException",
 	"ConnectionOverflowException"
 ]

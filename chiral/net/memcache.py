@@ -51,7 +51,6 @@ from chiral.net import tcp, reactor
 from decorator import decorator
 
 import sys
-import socket
 import time
 try:
 	import cPickle as pickle
@@ -113,19 +112,6 @@ class Client(local):
 	_FLAG_COMPRESSED = 1 << 3
 
 	_SERVER_RETRIES = 10  # how many times to try finding a free server.
-
-	# exceptions for Client
-	class MemcachedKeyError(Exception):
-		"""Invalid key."""
-		pass
-
-	class MemcachedKeyLengthError(MemcachedKeyError):
-		"""Key too long."""
-		pass
-
-	class MemcachedKeyCharacterError(MemcachedKeyError):
-		"""Key contains invalid characters."""
-		pass
 
 	def __init__(self, servers, debug=False):
 		"""
@@ -197,7 +183,7 @@ class Client(local):
 		"Expire all data currently in the memcache servers."
 
 		for server in self.servers:
-			yield server.sendeall("flush_all")
+			yield server.sendall("flush_all")
 			yield server.read_line()
 
 	def _debuglog(self, string):
@@ -210,6 +196,7 @@ class Client(local):
 		for server in self.servers:
 			server.dead_until = 0
 
+	@as_coro_waitcondition
 	def _get_server_for(self, key):
 		"""Given a key, return the _ServerConnection to which that key should be mapped."""
 
@@ -221,108 +208,52 @@ class Client(local):
 		for i in range(Client._SERVER_RETRIES):
 			server = self.buckets[serverhash % len(self.buckets)]
 
-			#if server.connect():
-				#print "(using server %s)" % server,
-			return server, key
+			if (yield server.check()):
+				raise StopIteration((server, key))
 
 			serverhash = crc32(str(serverhash) + str(i))
 
-		return None, None
+		raise StopIteration((None, None))
 
 	def disconnect_all(self):
 		"""Disconnect all servers."""
 		for server in self.servers:
 			server.close()
 
-	@as_coro_waitcondition
-	def delete(self, key, dead_time=0):
-		"""
-		Deletes a key from the memcache.
-
-		@return: Nonzero on success.
-		@param dead_time: number of seconds any subsequent set / update commands should fail. Defaults to 0 for no delay.
-		@rtype: bool
-		"""
-
-		check_key(key)
-		server, key = self._get_server_for(key)
-
-		if not server:
-			raise StopIteration(False)
-
-		if dead_time is None:
-			dead_time = 0
-
-		try:
-			yield server.sendall("delete %s %d\r\n" % (key, dead_time))
-
-			res = yield server.read_line()
-			if res != "DELETED":
-				self._debuglog("expected 'DELETED', got %r" % (res, ))
-				raise StopIteration(False)
-
-			raise StopIteration(True)
-
-		except socket.error, exc:
-			server.mark_dead(exc[1])
-			raise StopIteration(False)
-
-	@returns_waitcondition
-	def incr(self, key, delta=1):
-		"""
-		Sends a command to the server to atomically increment the value for C{key} by
-		C{delta}, or by 1 if C{delta} is unspecified.  Returns None if C{key} doesn't
-		exist on server, otherwise it returns the new value after incrementing.
-
-		Note that the value for C{key} must already exist in the memcache, and it
-		must be the string representation of an integer.
-
-		>>> mc.set("counter", "20")  # returns True, indicating success
-		1
-		>>> mc.incr("counter")
-		21
-		>>> mc.incr("counter")
-		22
-
-		Overflow on server is not checked.  Be aware of values approaching
-		2**32.  See L{decr}.
-
-		@param delta: Integer amount to increment by (should be zero or greater).
-		@return: New value after incrementing.
-		@rtype: int
-		"""
-		return self._incrdecr("incr", key, delta)
-
-	@returns_waitcondition
-	def decr(self, key, delta=1):
-		"""
-		Like L{incr}, but decrements.  Unlike L{incr}, underflow is checked and
-		new values are capped at 0.  If server value is 1, a decrement of 2
-		returns 0, not -1.
-
-		@param delta: Integer amount to decrement by (should be zero or greater).
-		@return: New value after decrementing.
-		@rtype: int
-		"""
-		return self._incrdecr("decr", key, delta)
 
 	@as_coro_waitcondition
-	def _incrdecr(self, cmd, key, delta):
-		"""Helper function for handling incr and decr."""
-		check_key(key)
-		server, key = self._get_server_for(key)
-		if not server:
-			return
+	def get(self, key):
+		'''Retrieves a key from the memcache.
 
-		cmd = "%s %s %d\r\n" % (cmd, key, delta)
+		@return: The value or None.
+		'''
+		check_key(key)
+		server, key = yield self._get_server_for(key)
+		if not server:
+			raise StopIteration(None)
 
 		try:
-			yield server.sendall(cmd)
+			yield server.sendall("get %s\r\n" % key)
 			line = yield server.read_line()
-			raise StopIteration(int(line))
-		except socket.error, exc:
-			server.mark_dead(exc[1])
-			return
+			if line[:5] == "VALUE":
+				_resp, _rkey, flags, data_len = line.split()
+				value = self._parse_value(
+					(yield server.read_exactly(int(data_len) + 2))[:-2],
+					int(flags)
+				)
+
+				res = yield server.read_line()
+				if res != "END":
+					self._debuglog("expected 'END', got %r" % (res, ))
+			else:
+				value = None
+
+		except tcp.ConnectionClosedException:
+			server.mark_dead()
+			raise StopIteration(None)
+
+		raise StopIteration(value)
+
 
 	@returns_waitcondition
 	def add(self, key, val, expiry_time=0, min_compress_len=0):
@@ -379,7 +310,7 @@ class Client(local):
 	def _set(self, cmd, key, val, expiry_time, min_compress_len = 0):
 		"""Helper function for add, set, replace"""
 		check_key(key)
-		server, key = self._get_server_for(key)
+		server, key = yield self._get_server_for(key)
 		if not server:
 			raise StopIteration(False)
 
@@ -397,12 +328,100 @@ class Client(local):
 			res = yield server.read_line()
 			raise StopIteration(res == "STORED")
 
-		except socket.error, exc:
-			server.mark_dead(exc[1])
+		except tcp.ConnectionClosedException:
+			server.mark_dead()
 
 		raise StopIteration(False)
 
+	@as_coro_waitcondition
+	def delete(self, key, dead_time=0):
+		"""
+		Deletes a key from the memcache.
 
+		@return: Nonzero on success.
+		@param dead_time: number of seconds any subsequent set / update commands should fail. Defaults to 0 for no delay.
+		@rtype: bool
+		"""
+
+		check_key(key)
+		server, key = yield self._get_server_for(key)
+
+		if not server:
+			raise StopIteration(False)
+
+		if dead_time is None:
+			dead_time = 0
+
+		try:
+			yield server.sendall("delete %s %d\r\n" % (key, dead_time))
+
+			res = yield server.read_line()
+			if res != "DELETED":
+				self._debuglog("expected 'DELETED', got %r" % (res, ))
+				raise StopIteration(False)
+
+			raise StopIteration(True)
+
+		except tcp.ConnectionClosedException:
+			server.mark_dead()
+
+	@returns_waitcondition
+	def incr(self, key, delta=1):
+		"""
+		Sends a command to the server to atomically increment the value for C{key} by
+		C{delta}, or by 1 if C{delta} is unspecified.  Returns None if C{key} doesn't
+		exist on server, otherwise it returns the new value after incrementing.
+
+		Note that the value for C{key} must already exist in the memcache, and it
+		must be the string representation of an integer.
+
+		>>> mc.set("counter", "20")  # returns True, indicating success
+		1
+		>>> mc.incr("counter")
+		21
+		>>> mc.incr("counter")
+		22
+
+		Overflow on server is not checked.  Be aware of values approaching
+		2**32.  See L{decr}.
+
+		@param delta: Integer amount to increment by (should be zero or greater).
+		@return: New value after incrementing.
+		@rtype: int
+		"""
+		return self._incrdecr("incr", key, delta)
+
+	@returns_waitcondition
+	def decr(self, key, delta=1):
+		"""
+		Like L{incr}, but decrements.  Unlike L{incr}, underflow is checked and
+		new values are capped at 0.  If server value is 1, a decrement of 2
+		returns 0, not -1.
+
+		@param delta: Integer amount to decrement by (should be zero or greater).
+		@return: New value after decrementing.
+		@rtype: int
+		"""
+		return self._incrdecr("decr", key, delta)
+
+	@as_coro_waitcondition
+	def _incrdecr(self, cmd, key, delta):
+		"""Helper function for handling incr and decr."""
+		check_key(key)
+		server, key = yield self._get_server_for(key)
+		if not server:
+			return
+
+		cmd = "%s %s %d\r\n" % (cmd, key, delta)
+
+		try:
+			yield server.sendall(cmd)
+			line = yield server.read_line()
+			raise StopIteration(int(line))
+		except tcp.ConnectionClosedException:
+			server.mark_dead()
+
+	@as_coro_waitcondition
 	def _map_keys_to_servers(self, key_iterable, key_prefix):
 		"""
 		For each key in data, determine which server that key should be mapped to.
@@ -428,10 +447,10 @@ class Client(local):
 				str_orig_key = str(orig_key[1])
 				# Ensure call to _get_server_for gets a Tuple as well.
 				# Gotta pre-mangle key before hashing to a server. Returns the mangled key.
-				server, key = self._get_server_for((orig_key[0], key_prefix + str_orig_key))
+				server, key = yield self._get_server_for((orig_key[0], key_prefix + str_orig_key))
 			else:
 				str_orig_key = str(orig_key) # set_multi supports int / long keys.
-				server, key = self._get_server_for(key_prefix + str_orig_key)
+				server, key = yield self._get_server_for(key_prefix + str_orig_key)
 
 			# Now check to make sure key length is proper ...
 			check_key(str_orig_key, key_extra_len=key_extra_len)
@@ -446,7 +465,7 @@ class Client(local):
 			deprefix[key] = orig_key
 			
 
-		return server_keys, deprefix
+		raise StopIteration((server_keys, deprefix))
 
 	def get_multi(self, keys, key_prefix=''):
 		"""
@@ -486,7 +505,7 @@ class Client(local):
 
 		"""
 
-		server_keys, deprefix = self._map_keys_to_servers(keys, key_prefix)
+		server_keys, deprefix = yield self._map_keys_to_servers(keys, key_prefix)
 
 		# send out all requests on each server before reading anything
 		dead_servers = []
@@ -496,8 +515,8 @@ class Client(local):
 				server.sendall("get %s\r\n" % " ".join(
 					prefixed_key for prefixed_key, _original_key in server_keys[server]
 				))
-			except socket.error, exc:
-				server.mark_dead(exc[1])
+			except tcp.ConnectionClosedException:
+				server.mark_dead()
 				dead_servers.append(server)
 
 		# if any servers died on the way, don't expect them to respond.
@@ -520,8 +539,8 @@ class Client(local):
 
 					line = yield server.read_line()
 
-			except socket.error, exc:
-				server.mark_dead(exc)
+			except tcp.ConnectionClosedException:
+				server.mark_dead()
 
 		raise StopIteration(retvals)
 
@@ -567,7 +586,7 @@ class Client(local):
 		@rtype: list
 		"""
 
-		server_keys, deprefix = self._map_keys_to_servers(mapping.iterkeys(), key_prefix)
+		server_keys, deprefix = yield self._map_keys_to_servers(mapping.iterkeys(), key_prefix)
 
 		# send out all requests on each server before reading anything
 		dead_servers = []
@@ -591,8 +610,8 @@ class Client(local):
 
 			try:
 				server.send_cmds(''.join(commands))
-			except socket.error, exc:
-				server.mark_dead(exc[1])
+			except tcp.ConnectionClosedException:
+				server.mark_dead()
 				dead_servers.append(server)
 
 		# if any servers died on the way, don't expect them to respond.
@@ -608,8 +627,8 @@ class Client(local):
 						continue
 					else:
 						notstored.append(deprefix[key]) #un-mangle.
-			except socket.error, exc:
-				server.mark_dead(exc)
+			except tcp.ConnectionClosedException:
+				server.mark_dead()
 
 		raise StopIteration(notstored)
 
@@ -638,7 +657,7 @@ class Client(local):
 		@rtype: bool
 		"""
 
-		server_keys, _deprefix = self._map_keys_to_servers(keys, key_prefix)
+		server_keys, _deprefix = yield self._map_keys_to_servers(keys, key_prefix)
 
 		# send out all requests on each server before reading anything
 		dead_servers = []
@@ -655,8 +674,8 @@ class Client(local):
 
 			try:
 				server.send_cmds(''.join(commands))
-			except socket.error, exc:
-				server.mark_dead(exc[1])
+			except tcp.ConnectionClosedException:
+				server.mark_dead()
 				dead_servers.append(server)
 
 		# if any servers died on the way, don't expect them to respond.
@@ -669,8 +688,8 @@ class Client(local):
 					res = yield server.read_line()
 					if res != "DELETED":
 						self._debuglog("expected 'DELETED', got %r" % (res, ))
-			except socket.error, exc:
-				server.mark_dead(exc)
+			except tcp.ConnectionClosedException:
+				server.mark_dead()
 				ret = False
 
 		raise StopIteration(ret)
@@ -712,41 +731,6 @@ class Client(local):
 				value = compressed_value
 
 		return flags, value
-
-	@as_coro_waitcondition
-	def get(self, key):
-		'''Retrieves a key from the memcache.
-
-		@return: The value or None.
-		'''
-		check_key(key)
-		server, key = self._get_server_for(key)
-		if not server:
-			raise StopIteration(None)
-
-		try:
-			yield server.sendall("get %s\r\n" % key)
-			line = yield server.read_line()
-			if line[:5] == "VALUE":
-				_resp, _rkey, flags, data_len = line.split()
-				value = self._parse_value(
-					(yield server.read_exactly(int(data_len) + 2))[:-2],
-					int(flags)
-				)
-
-				res = yield server.read_line()
-				if res != "END":
-					self._debuglog("expected 'END', got %r" % (res, ))
-			else:
-				value = None
-
-		except socket.error, msg:
-			if type(msg) is tuple:
-				msg = msg[1]
-			server.mark_dead(msg)
-			raise StopIteration(None)
-
-		raise StopIteration(value)
 
 
 	def _parse_value(self, data, flags):
@@ -794,20 +778,29 @@ class _ServerConnection(tcp.TCPConnection):
 
 		self.deaduntil = 0
 
-		sock = socket.socket()
-		sock.connect(self.addr)
+		tcp.TCPConnection.__init__(self, self.addr)
 
-		tcp.TCPConnection.__init__(self, sock, None)
+	@as_coro_waitcondition
+	def check(self):
+		"""
+		Attempt to establish or reistablish the connection.
 
-	def _check_dead(self):
+		* If the connection failed less than _DEAD_RETRY seconds ago, return False
+		* Otherwise, attempt to connect now.
+		"""
 		if self.deaduntil and self.deaduntil > time.time():
-			return True
+			raise StopIteration(False)
 
-		self.deaduntil = None
-		return False
+		try:
+			yield self.connect()
+		except tcp.ConnectionException, exc:
+			self.mark_dead(exc)
+			raise StopIteration(False)
 
-	def mark_dead(self, reason):
-		self.debuglog("MemCache: %s: %s.  Marking dead." % (self, reason))
+		raise StopIteration(True)
+
+	def mark_dead(self, reason=None):
+		self.debuglog("MemCache: %s: Marking dead%s." % (self, (" (%s)" % (reason,) if reason else '')))
 		self.deaduntil = time.time() + self._DEAD_RETRY
 		self.close()
 
@@ -871,14 +864,6 @@ def check_key(key, key_extra_len=0):
 		if ord(char) < 33:
 			raise ValueError("Control characters not allowed")
 
-def _doctest():
-	import doctest, memcache
-	servers = ["127.0.0.1:11211"]
-	connection = Client(servers, debug=True)
-	globs = {"mc": connection}
-	return doctest.testmod(memcache, globs=globs)
-
-
 
 import unittest
 
@@ -889,8 +874,11 @@ def _coro_test_wrapper(func, self):
 	reactor.run()
 
 	if coro.state != coro.STATE_COMPLETED:
-		exc_type, exc_value, exc_traceback = coro.result[1]
-		raise exc_type, exc_value, exc_traceback
+		if coro.result and coro.result[1]:
+			exc_type, exc_value, exc_traceback = coro.result[1]
+			raise exc_type, exc_value, exc_traceback
+		else:
+			raise Exception("Coroutine did not complete: %r" % (coro, ))
 
 class _MemcachedTests(unittest.TestCase):
 	def setUp(self):
@@ -983,8 +971,7 @@ class _MemcachedTests(unittest.TestCase):
 
 		self.assertEquals(res, None)
 
+
 if __name__ == "__main__":
-	print "Testing docstrings..."
-	#_doctest()
 	print "Running tests:"
 	unittest.main()

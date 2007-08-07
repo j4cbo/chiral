@@ -13,6 +13,12 @@ import select
 import traceback
 import weakref
 
+class ConnectionException(Exception):
+	"""Indicates that the connection has failed and will be closed."""
+
+class ConnectionClosedException(ConnectionException):
+	"""Indicates that the connection was closed by the remote end."""
+
 class Reactor(object):
 	"""Base class for Reactor objects."""
 
@@ -238,8 +244,7 @@ class EpollReactor(Reactor):
 			# Just return.
 			return False
 
-		for event_desc in events:
-			event_fd = event_desc[1]
+		for _event_flags, event_fd in events:
 			sock, callback = self._sockets[event_fd][1:3]
 			del self._sockets[event_fd]
 
@@ -267,3 +272,9 @@ try:
 except ImportError:
 	del EpollReactor
 	DefaultReactor = SelectReactor
+
+__all__ = [
+	"ConnectionException",
+	"ConnectionClosedException",
+	"DefaultReactor"
+]

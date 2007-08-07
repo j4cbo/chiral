@@ -12,7 +12,6 @@ from chiral.core.coroutine import returns_waitcondition
 _CHIRAL_RELOADABLE = True
 
 from datetime import datetime
-import socket
 import re
 
 class IRCUser(base.MessagingUser):
@@ -289,10 +288,7 @@ class IRCConnection(base.MessagingConnection, tcp.TCPConnection):
 		self.username = username
 		self.realname = realname
 
-		sock = socket.socket()
-		sock.connect(server)
-
 		base.MessagingConnection.__init__(self)
-		tcp.TCPConnection.__init__(self, sock, server)
+		tcp.TCPConnection.__init__(self, server)
 
 		self.start()

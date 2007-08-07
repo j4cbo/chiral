@@ -47,7 +47,7 @@ class ThreadPoolWatcher(tcp.TCPConnection):
 
 		self.restart = WaitForCallback("ThreadPoolWatcher restart")
 
-		tcp.TCPConnection.__init__(self, read_socket, None)
+		tcp.TCPConnection.__init__(self, None, read_socket)
 		self.start()
 
 	def connection_handler(self):
