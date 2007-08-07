@@ -7,7 +7,6 @@
 
 from chiral.net import tcp
 from StringIO import StringIO
-import socket
 import sys
 import code
 
@@ -68,9 +67,10 @@ class ChiralShellConnection(tcp.TCPConnection, code.InteractiveInterpreter):
 			# Read the next line of code
 			try:
 				inputbuffer.append((yield self.read_line()))
-			except (tcp.ConnectionClosedException, socket.error):
+			except tcp.ConnectionException:
 				return
 
+			# See if we have a complete block
 			try:
 				more = self.runsource("\n".join(inputbuffer), "<console>")
 			except SystemExit:
@@ -79,13 +79,15 @@ class ChiralShellConnection(tcp.TCPConnection, code.InteractiveInterpreter):
 			if not more:
 				inputbuffer = []
 
+			# Send the response
 			output = self.outputbuffer.getvalue()
 			if output:
 				yield self.send(output)
 				self.outputbuffer.truncate(0)
 
 	def write(self, data):
-		"""Add data to self.outputbuffer.
+		"""
+		Add data to self.outputbuffer.
 
 		Used internally by self.showtraceback().
 		"""
