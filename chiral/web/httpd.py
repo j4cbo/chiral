@@ -336,7 +336,7 @@ class HTTPConnection(tcp.TCPConnection):
 			if waiting_coro:
 				try:
 					coro, = waiting_coro
-					delayed_data = yield coroutine.WaitForCoroutine(coro)
+					delayed_data = yield coro
 
 					# See if we can set Content-Length 
 					try:

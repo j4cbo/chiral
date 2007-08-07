@@ -104,7 +104,7 @@ class TCPConnection(coroutine.Coroutine):
 		except socket.error, exc:
 			if exc[0] == errno.EAGAIN:
 				# OK, we're going to need to spawn a new coroutine.
-				return coroutine.WaitForCoroutine(self._read_line_coro(max_len, delimiter))
+				return self._read_line_coro(max_len, delimiter)
 			else:
 				# Something else is broken; raise it again.
 				raise exc
@@ -121,7 +121,7 @@ class TCPConnection(coroutine.Coroutine):
 			raise ConnectionOverflowException()
 
 		# The line isn't available yet. Spawn a coroutine to deal with it.
-		return coroutine.WaitForCoroutine(self._read_line_coro(max_len, delimiter))
+		return self._read_line_coro(max_len, delimiter)
 
 
 

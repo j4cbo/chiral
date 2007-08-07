@@ -82,7 +82,7 @@ def _as_coro_waitcondition_dec(gen, *args, **kwargs):
 	"""Implementation of as_coro_waitcondition."""
 	# This is a separate function because the decorator module (@decorator) does not provide
 	# for modification of the decorated function docstring.
-	return WaitForCoroutine(Coroutine(gen(*args, **kwargs), autostart = False)) #pylint: disable-msg=W0142
+	return Coroutine(gen(*args, **kwargs), autostart = False) #pylint: disable-msg=W0142
 
 def as_coro_waitcondition(func):
 	"""
@@ -156,9 +156,9 @@ class WaitCondition(object):
 		"""
 		raise NotImplementedError
 
-	def unbind(self):
+	def unbind(self, coro):
 		"""
-		Remove the binding that was last established with self.bind().
+		Remove the binding that was established with self.bind(coro).
 
 		Raises an AssertionError if the WaitCondition is not currently bound.
 
@@ -195,16 +195,12 @@ class WaitForNothing(WaitCondition):
 		#pylint: disable-msg=W0231
 		self.data = (value, exc)
 
-	def bind(self, coro): #pylint: disable-msg=W0613
+	def bind(self, _coro):
 		"""Bind to a given coroutine; see `WaitCondition.bind()`."""
-
-		# WaitForNothing doesn't do anything with coro, although the WaitCondition
-		# interface requires it. The above disable-msg line prevents pylint from
-		# complaining about that.
 
 		return self.data
 
-	def unbind(self):
+	def unbind(self, _coro):
 		"""Unbind from a given coroutine; see `WaitCondition.unbind()`."""
 
 		raise AssertionError("WaitForNothing instances cannot be bound.")
@@ -240,9 +236,9 @@ class WaitForCallback(WaitCondition):
 		"""Bind to a given coroutine; see `WaitCondition.bind()`."""
 		self.bound_coro = coro
 
-	def unbind(self):
+	def unbind(self, coro):
 		"""Unbind from a given coroutine; see `WaitCondition.unbind()`."""
-		assert self.bound_coro
+		assert self.bound_coro is coro
 		self.bound_coro = None
 
 	def __call__(self, value=None):
@@ -294,9 +290,9 @@ class WaitForCallbackArgs(WaitCondition):
 		"""Bind to a given coroutine; see `WaitCondition.bind()`."""
 		self.bound_coro = coro
 
-	def unbind(self):
+	def unbind(self, coro):
 		"""Unbind from a given coroutine; see `WaitCondition.unbind()`."""
-		assert self.bound_coro
+		assert self.bound_coro is coro
 		self.bound_coro = None
 
 	def __call__(self, *args):
@@ -311,43 +307,6 @@ class WaitForCallbackArgs(WaitCondition):
 		else:
 			return "<WaitForCallback>"
 
-
-class WaitForCoroutine(WaitCondition):
-	"""
-	A WaitCondition that results in the value returned by another coroutine.
-	"""
-
-	def __init__(self, waiting_coro):
-		"""Constructor. Wait for waiting_coro to complete."""
-		# Don't call WaitCondition.__init__; it raises NotImplementedError to prevent
-		# it from being instantiated directly.
-		#pylint: disable-msg=W0231
-		self.waiting_coro = waiting_coro
-		self.bound_coro = None
-
-	def bind(self, coro):
-		"""Bind to a given coroutine; see `WaitCondition.bind()`."""
-
-		self.waiting_coro.is_watched = True
-		self.waiting_coro.start(force = False)
-
-		if self.waiting_coro.state in (Coroutine.STATE_COMPLETED, Coroutine.STATE_FAILED):
-			# If waiting_coro has already returned, just return its state now.
-			return self.waiting_coro.result
-		else:
-			# Hasn't started yet se:
-			self.bound_coro = coro
-			self.waiting_coro.add_completion_callback(coro.resume)
-			return None
-		
-	def unbind(self):
-		"""Unbind from a given coroutine; see `WaitCondition.unbind()`."""
-		assert self.bound_coro
-		self.waiting_coro.remove_completion_callback(self.bound_coro.resume)
-		self.bound_coro = None
-
-	def __repr__(self):
-		return "<WaitForCoroutine: for %s>" % self.waiting_coro
 
 class _CoroutineMutexManager(object):
 	"""Context manager for CoroutineMutex objects."""
@@ -446,7 +405,7 @@ try:
 except NameError:
 	_COROUTINES = weakref.WeakValueDictionary()
 
-class Coroutine(object):
+class Coroutine(WaitCondition):
 	"""
 	A coroutine.
 	"""
@@ -557,7 +516,7 @@ class Coroutine(object):
 			if not isinstance(gen_result, WaitCondition):
 				# The generator yielded a value that was not a WaitCondition
 				# instance. Treat it as another coroutine.
-				gen_result = WaitForCoroutine(Coroutine(gen_result))
+				gen_result = Coroutine(gen_result)
 
 			bind_result = gen_result.bind(self)
 
@@ -587,6 +546,29 @@ class Coroutine(object):
 		assert self.state == self.STATE_STOPPED
 		self.state = self.STATE_SUSPENDED
 		self.resume(None)
+
+	def bind(self, bound_coro):
+		"""
+		Bind to a given coroutine; see `WaitCondition.bind()`.
+
+		This adds bound_coro.resume as a completion callback, such that it will resume
+		once we terminate (if that has not happened already).
+		"""
+
+		self.is_watched = True
+		self.start(force = False)
+
+		if self.state in (self.STATE_COMPLETED, self.STATE_FAILED):
+			# If we've alread waiting_coro has already returned, just return its state now.
+			return self.result
+		else:
+			# Hasn't started yet se:
+			self.add_completion_callback(bound_coro.resume)
+			return None
+		
+	def unbind(self, coro):
+		"""Unbind from a given coroutine; see `WaitCondition.unbind()`."""
+		self.waiting_coro.remove_completion_callback(coro.resume)
 
 	def add_completion_callback(self, callback):
 		"""
