@@ -396,7 +396,7 @@ class TCPServer(coroutine.Coroutine):
 		self.master_socket.bind(self.bind_addr)
 		self.master_socket.listen(5)
 
-		coroutine.Coroutine.__init__(self, self.acceptor())
+		coroutine.Coroutine.__init__(self, self.acceptor(), autostart = False)
 
 	def acceptor(self):
 		"""Main coroutine function.

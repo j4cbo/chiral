@@ -74,7 +74,7 @@ def as_coro(gen, *args, **kwargs):
 	Create a new Coroutine with each call to the wrapped function.
 	"""
 
-	return Coroutine(gen(*args, **kwargs)) #pylint: disable-msg=W0142
+	return Coroutine(gen(*args, **kwargs), autostart = True) #pylint: disable-msg=W0142
 
 
 @decorator
@@ -222,7 +222,7 @@ class WaitForCallback(WaitCondition):
 		Constructor.
 
 		:Parameters:
-		  - `description`: The purpose of the callback, to be included in ``repr()``.
+			- `description`: The purpose of the callback, to be included in ``repr()``.
 
 		"""
 		# Don't call WaitCondition.__init__; it raises NotImplementedError to prevent
@@ -397,6 +397,49 @@ class CoroutineMutex(object):
 			return "<WaitForCallback>"
 
 
+
+class CoroutineRestart(Exception):
+	"""
+	Raise from within a generator to indicate that the coroutine should be restarted
+	with a new generator.
+
+	While "raise StopIteration(value)" is like a return statement, CoroutineRestart
+	implememts an optimized tail-call or tail-recursion. A generator, or a Coroutine
+	that has not been start()ed yet, should be passed to __init__.
+
+	For example, these two functions act almost equivalently::
+
+		def handle_connection(self):
+			while True:
+
+				[ code to handle one request ]
+
+				if not self.more_requests:
+					break
+				
+
+	And::
+
+		def handle_connection(self):
+
+			[ code to handle one request ]
+
+			if self.more_requests:
+				raise CoroutineRestart(self.handle_connection())
+
+
+	There are a few differences; for example, code reloads will not take effect during the
+	lifetime of the former handle_connection(), but they will for the latter. One could also
+	put the request handling code in its own coroutine, at the expense of greater
+	complexity.
+	"""
+
+	def __init__(self, gen):
+		Exception.__init__(self)
+		self.gen = gen
+
+
+
 # Store a global list of all current coroutines. The try/except block
 # ensures that even if this module is reloaded, only one list of
 # coroutines will ever exist.
@@ -414,11 +457,18 @@ class Coroutine(WaitCondition):
 
 	__state_names = "stopped", "running", "suspended", "completed", "failed"
 
-	def __init__(self, generator, default_callback=None, autostart=True, is_watched=False):
+	def __init__(self, generator, default_callback=None, autostart=None, is_watched=False):
 		"""
 		Create a coroutine instance. "generator" is the function or method that contains
 		the body of the coroutine code.
 		"""
+
+		# Don't call WaitCondition.__init__; it raises NotImplementedError to prevent
+		# it from being instantiated directly.
+		#pylint: disable-msg=W0231
+
+		if autostart is None:
+			raise Exception("autostart must be explicitly passed")
 
 		self.state = self.STATE_STOPPED
 		self.result = None
@@ -469,6 +519,19 @@ class Coroutine(WaitCondition):
 
 				self.result = (result, None)
 
+			except CoroutineRestart, exc:
+				# Restart with a new Coroutine or generator
+
+				if isinstance(exc.gen, Coroutine):
+					assert exc.gen.state == self.STATE_STOPPED
+					self.gen = exc.gen.gen
+					self.completion_callbacks.extend(exc.gen.completion_callbacks)
+				else:
+					self.gen = exc.gen
+
+				next_value, next_exception = None, None
+				continue
+
 			except Exception: #pylint: disable-msg=W0703
 				# An (unexpected) exception was thrown; terminate the coroutine.
 				self.state = self.STATE_FAILED
@@ -516,7 +579,7 @@ class Coroutine(WaitCondition):
 			if not isinstance(gen_result, WaitCondition):
 				# The generator yielded a value that was not a WaitCondition
 				# instance. Treat it as another coroutine.
-				gen_result = Coroutine(gen_result)
+				gen_result = Coroutine(gen_result, autostart=True)
 
 			bind_result = gen_result.bind(self)
 
@@ -568,7 +631,7 @@ class Coroutine(WaitCondition):
 		
 	def unbind(self, coro):
 		"""Unbind from a given coroutine; see `WaitCondition.unbind()`."""
-		self.waiting_coro.remove_completion_callback(coro.resume)
+		self.remove_completion_callback(coro.resume)
 
 	def add_completion_callback(self, callback):
 		"""

@@ -7,8 +7,12 @@
 
 from chiral.net import reactor
 from chiral.core import coroutine
+from chiral.web import servers
 import datetime
 import time
+
+from paste import fileapp
+from pkg_resources import resource_filename
 
 _CHIRAL_RELOADABLE = True
 
@@ -157,3 +161,9 @@ class CometClock(object):
 		else:
 			start_response('404 Not Found', [('Content-Type', 'text/html')])
 			return [ "404 Not Found" ]
+
+class CometLibServer(fileapp.FileApp):
+	"""File server that serves cometlib.js."""
+	def __init__(self):
+		"""Constructor"""
+		fileapp.FileApp.__init__(self, resource_filename("chiral.web", "cometlib.js"))

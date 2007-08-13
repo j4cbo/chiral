@@ -14,7 +14,7 @@ print "Loading applications..."
 
 from paste.pony import PonyMiddleware
 from chiral.web.introspector import Introspector
-from chiral.web.comet import CometClock
+from chiral.web.comet import CometClock, CometLibServer
 from chiral.web.servers import StaticFileServer
 from chiral.web.framework import *
 
@@ -30,22 +30,28 @@ application = URLMap()
 application.update({
 	"/pony": PonyMiddleware(HTTPNotFound()),
 	"/introspector": Introspector(),
-	"/home": StaticFileServer("/home/jacob"),
+	"/static": StaticFileServer("/home/jacob/code/chiral/static"),
 	"/tp": asyncpagetest,
+	"/cometlib": CometLibServer(),
 	"/": CometClock()
 })
 
 HTTPServer(
 	bind_addr = ('', 8081),
 	application = application
-)
+).start()
 
 ChiralShellServer(
 	bind_addr = ('', 9123)
-)
+).start()
 
 print "Running..."
 
-reactor.run()
+import cProfile
+
+def run():
+	reactor.run()
+
+cProfile.run(run.func_code, "test.prof")
 
 stats.dump()

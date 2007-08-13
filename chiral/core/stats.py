@@ -11,10 +11,12 @@ already present, or incremented if it is present.
 # it under the terms of the GNU General Public License as published by
 # the Free Software Foundation, version 2.
 
+import collections
+
 try:
 	_STATS # pylint: disable-msg=W0104
 except NameError:
-	_STATS = {}
+	_STATS = collections.defaultdict(lambda: 1)
 
 
 if __debug__:
@@ -29,10 +31,7 @@ if __debug__:
 				stats.increment("myapp.cache.misses")
 				return self.get(key)
 		"""
-		try:
-			_STATS[key] += 1
-		except KeyError:
-			_STATS[key] = 1
+		_STATS[key] += 1
 else:
 	def increment(key): # pylint: disable-msg=W0613
 		"""Increment the call count for an event. (Disabled in non-debug mode.)"""

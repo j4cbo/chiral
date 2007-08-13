@@ -93,9 +93,9 @@ class Client(local):
 
 	1. A simple hashable type (string, integer, etc.).
 	2. A tuple of C{(hashvalue, key)}.  This is useful if you want to avoid
-		   making this module calculate a hash value.  You may prefer, for
-		   example, to keep all of a given user's objects on the same memcache
-		   server, so you could use the user's unique id as the hash value.
+		making this module calculate a hash value.  You may prefer, for
+		example, to keep all of a given user's objects on the same memcache
+		server, so you could use the user's unique id as the hash value.
 
 	@group Setup: __init__, set_servers, forget_dead_hosts, disconnect_all
 	@group Insertion: set, add, replace, set_multi
@@ -870,7 +870,7 @@ import unittest
 @decorator
 def _coro_test_wrapper(func, self):
 	"""Run the test to set things up, then start the reactor."""
-	coro = Coroutine(func(self), is_watched = True)
+	coro = Coroutine(func(self), is_watched = True, autostart = True)
 	reactor.run()
 
 	if coro.state != coro.STATE_COMPLETED:
