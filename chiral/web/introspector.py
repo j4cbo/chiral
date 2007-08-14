@@ -7,6 +7,8 @@
 
 import sys
 import gc
+import types
+import traceback
 
 from chiral.core import xreload, coroutine
 from chiral.net import reactor
@@ -28,6 +30,54 @@ INTROSPECTOR_ROOT_TEMPLATE = """
   </style>
  </head>
  <body>
+
+  <div py:def="referrers(_referrers_object, _exclusion_list, _recursion_depth = 0)" py:strip="True">
+
+   <?python
+	def name_in_frame(frame, obj):
+		var_name = "name not found"
+		for k, v in frame.f_locals.iteritems():
+			if v is obj:
+				var_name = "as %s in locals" % (k, )
+		else:
+			for k, v in frame.f_globals.iteritems():
+				if v is obj:
+					var_name = "as %s in globals" % (k, )
+
+		print "looking up %r in %r: %s" % (obj, frame, var_name)
+		return var_name
+   ?>
+
+   <a href="#" onclick="this.nextSibling.style.display = 'block'">+</a><ul style="display: none">
+    <?python
+	_referrers_list = [
+		ref
+		for ref
+		in gc.get_referrers(_referrers_object)
+		if (
+			ref not in _exclusion_list and
+			not (type(ref) == types.FrameType and 'Genshi' in ref.f_code.co_filename) and
+			not (type(ref) == dict and ('_referrers_object' in ref or '_i_coro' in ref))
+		)
+	]
+	del ref
+	_referrers_list.sort(key = id)
+    ?>
+
+    <li py:for="ref in _referrers_list">
+     ${repr(ref)}
+     <i py:if="type(ref) == types.FrameType">
+      ${ref.f_code.co_filename}:${ref.f_code.co_firstlineno} - ${ref.f_lineno};
+      ${name_in_frame(ref, _referrers_object)}
+     </i>
+
+     <pre py:if="type(ref) == types.TracebackType">${traceback.format_tb(ref)}</pre>
+
+     ${referrers(ref, _exclusion_list + [ _referrers_list ], _recursion_depth - 1) if _recursion_depth > 0 else None}
+    </li>
+   </ul>
+  </div>
+
   <h1><a href="${rooturl}">Chiral Introspector</a></h1>
 
   <h2>Garbage Collector</h2>
@@ -43,9 +93,15 @@ INTROSPECTOR_ROOT_TEMPLATE = """
   <h2>Coroutines</h2>
   <p>${len(list(coro for coro in coroutine._COROUTINES.valuerefs() if coro))} coroutines.</p>
   <ul>
-   <li py:for="coro in coroutine._COROUTINES.values()">
-    <a href="${rooturl}coroutine?id=${id(coro)}">${repr(coro)}</a>
+   <?python
+	coro_list = coroutine._COROUTINES.values()
+	coro_list.sort(key = id)
+   ?>
+   <li py:for="_i_coro in coro_list">
+    <a href="${rooturl}coroutine?id=${id(_i_coro)}">${repr(_i_coro)}</a>:
+    ${referrers(_i_coro, [ coro_list ])}
    </li>
+   <?python del coro_list ?>
   </ul>
 
   <h2>Reactor</h2>
@@ -155,6 +211,8 @@ class Introspector(object):
 			template_stream = self.root_template.generate(
 				rooturl = url,
 				gc = gc,
+				traceback = traceback,
+				types = types,
 				gc_collected = gc_collected,
 				coroutine = coroutine,
 				reactor = reactor,

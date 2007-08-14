@@ -335,8 +335,8 @@ class HTTPConnection(tcp.TCPConnection):
 			# complete once the response is done.
 			if waiting_coro:
 				try:
-					coro, = waiting_coro
-					delayed_data = yield coro
+					delayed_data = yield waiting_coro[0]
+					del waiting_coro[:]
 
 					# See if we can set Content-Length 
 					try:

@@ -503,6 +503,7 @@ class Coroutine(WaitCondition):
 				if next_exception:
 					exc_type, exc_value, exc_tb = next_exception
 					gen_result = self.gen.throw(exc_type, exc_value, exc_tb)
+					del exc_type, exc_value, exc_tb
 				elif next_value is not None:
 					gen_result = self.gen.send(next_value)
 				else:
@@ -539,6 +540,10 @@ class Coroutine(WaitCondition):
 
 			# If either of the two exception handlers fired, handle the completion callbacks.
 			if self.result is not None:
+
+				# Remove reference for GC
+				self.gen = None
+
 				for callback in self.completion_callbacks:
 					try:
 						callback_result = callback(self.result[0], self.result[1])
@@ -559,6 +564,9 @@ class Coroutine(WaitCondition):
 						self.state = self.STATE_COMPLETED
 					else:
 						self.state = self.STATE_FAILED
+
+				callback = None
+				del self.completion_callbacks[:]
 
 				if self.result[1] is not None and not self.is_watched:
 					# The exception was not handled, so log a warning.
@@ -584,6 +592,10 @@ class Coroutine(WaitCondition):
 			bind_result = gen_result.bind(self)
 
 			if bind_result is not None:	
+
+				# Delete the reference to gen_result here, to ensure prompt GC
+				del gen_result
+
 				# The WaitCondition was already ready; use whatever value
 				# or exception it gave, and loop around.
 				next_value, next_exception = bind_result
@@ -594,6 +606,7 @@ class Coroutine(WaitCondition):
 				self.wait_condition = gen_result
 				break
 
+		del self
 
 	def start(self, force=True):
 		"""Begin running the coroutine.
