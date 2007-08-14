@@ -1,4 +1,4 @@
-#/usr/bin/env python2.5
+#!/usr/bin/env python2.5
 
 print "Loading modules..."
 
@@ -23,7 +23,7 @@ print "Initializing..."
 @coroutine_page()
 @use_template("genshi", "chiral.web.templates.asdf")
 def asyncpagetest():
-	yield
+	yield reactor.schedule(delay = 1)
 	raise StopIteration({ "foo": "Test Page" })
 
 application = URLMap()

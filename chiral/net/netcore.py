@@ -67,15 +67,17 @@ class Reactor(object):
 		for sock in close_list:
 			sock.close()
 			
-
-	def schedule(self, app, delay = None, callbacktime = None):
+	@coroutine.returns_waitcondition
+	def schedule(self, delay = None, callbacktime = None):
 		"""
-		Run callback at some point in the future, either absolute or relative. The
-		"time" parameter, if given, should be a datetime.datetime object or UNIX
+		Return a WaitCondition that will fire at some point in the future.
+
+		The "time" parameter, if given, should be a datetime.datetime object or UNIX
 		timestamp; "delay" may be either a number of seconds or a datetime.timedelta.
 		time in seconds or a datetime.timedelta.
 
-		If both time and delay are None, the callback will be run as soon as possible.
+		If both time and delay are None, the WaitCondition will fire as soon as
+		possible, during the next reactor loop.
 		"""
 
 		now = time.time()
@@ -108,7 +110,7 @@ class Reactor(object):
 		callback = coroutine.WaitForCallback("reactor.schedule(callbacktime=%s)" % (callbacktime, ))
 
 		# Now the time is normalized; just add it to the queue.
-		heapq.heappush(self._events, (callbacktime, callback, app))
+		heapq.heappush(self._events, (callbacktime, callback))
 
 		return callback
 
@@ -129,22 +131,15 @@ class SelectReactor(Reactor):
 		self._read_sockets = {}
 		self._write_sockets = {}
 
-	def wait_for_readable(self, app, sock, callback):
-		"""Register callback to be called next time sock is readable."""
+	def wait_for_readable(self, sock, callback):
+		"""Wait for sock to be readable."""
 		assert sock not in self._read_sockets
-		self._read_sockets[sock] = (callback, app)
+		self._read_sockets[sock] = callback
 
-	def wait_for_writeable(self, app, sock, callback):
-		"""Register callback to be called next time sock is writeable."""
+	def wait_for_writeable(self, sock, callback):
+		"""Wait for sock to be writeable."""
 		assert sock not in self._write_sockets
-		self._write_sockets[sock] = (callback, app)
-
-	@property
-	def applications(self):
-		"""All applications with events currently waiting in the reactor."""
-		apps = set(app for callback, app in self._read_sockets.values() + self._write_sockets.values())
-		apps = apps | set(desc[2] for desc in self._events)
-		return apps
+		self._write_sockets[sock] = callback
 
 	def _run_once(self):
 		"""Run one iteration of the event handler."""
@@ -174,7 +169,7 @@ class SelectReactor(Reactor):
 			key is that item.
 			"""
 			for key in items:
-				callback = event_list[key][0]
+				callback = event_list[key]
 				del event_list[key]
 
 				# Yes, we really do want to catch /all/ Exceptions
@@ -206,24 +201,17 @@ class EpollReactor(Reactor):
 
 		self._sockets = {}
 
-	def wait_for_readable(self, app, sock, callback):
+	def wait_for_readable(self, sock, callback):
 		"""Register callback to be called next time sock is readable."""
 		assert sock.fileno() not in self._sockets
-		self._sockets[sock.fileno()] = app, sock, callback, epoll.EPOLLIN
+		self._sockets[sock.fileno()] = sock, callback, epoll.EPOLLIN
 		epoll.epoll_ctl(self.epoll_fd, epoll.EPOLL_CTL_ADD, sock.fileno(), epoll.EPOLLIN)
 
-	def wait_for_writeable(self, app, sock, callback):
+	def wait_for_writeable(self, sock, callback):
 		"""Register callback to be called next time sock is writeable."""
 		assert sock.fileno() not in self._sockets
-		self._sockets[sock.fileno()] = app, sock, callback, epoll.EPOLLOUT
+		self._sockets[sock.fileno()] = sock, callback, epoll.EPOLLOUT
 		epoll.epoll_ctl(self.epoll_fd, epoll.EPOLL_CTL_ADD, sock.fileno(), epoll.EPOLLOUT)
-
-	@property
-	def applications(self):
-		"""All applications with events currently waiting in the reactor."""
-		apps = set(desc[0] for desc in self._sockets.itervalues())
-		apps = apps | set(desc[2] for desc in self._events)
-		return apps
 
 	def _run_once(self):
 		"""Run one iteration of the event handler."""

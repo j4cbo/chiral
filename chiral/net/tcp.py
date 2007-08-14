@@ -173,7 +173,7 @@ class TCPConnection(coroutine.Coroutine):
 				res = socket_op(parameter)
 			except socket.error, exc:
 				if exc[0] == errno.EAGAIN:
-					cb_func(self, self.remote_sock, blocked_operation_handler)
+					cb_func(self.remote_sock, blocked_operation_handler)
 					return callback
 				else:
 					raise exc
@@ -181,7 +181,7 @@ class TCPConnection(coroutine.Coroutine):
 			# Don't bother. (try_now is set False by functions like read_line,
 			# which attempt the low-level operations themselves first to avoid
 			# creating Tasklets unnecessarily.)
-			cb_func(self, self.remote_sock, blocked_operation_handler)
+			cb_func(self.remote_sock, blocked_operation_handler)
 			return callback
 
 		return coroutine.WaitForNothing(res)
@@ -285,7 +285,7 @@ class TCPConnection(coroutine.Coroutine):
 					else:
 						callback(res[1])
 
-				reactor.wait_for_writeable(self, self.remote_sock, blocked_operation_handler)
+				reactor.wait_for_writeable(self.remote_sock, blocked_operation_handler)
 				return callback
 			elif exc.errno in (errno.EPIPE, errno.EBADF):
 				raise ConnectionClosedException()
@@ -330,7 +330,7 @@ class TCPConnection(coroutine.Coroutine):
 						callback.throw(ConnectionException(res, os.strerror(res)))
 
 				# Wait for the connection to go through
-				reactor.wait_for_writeable(self, self.remote_sock, blocked_connect_handler)
+				reactor.wait_for_writeable(self.remote_sock, blocked_connect_handler)
 
 			elif exc[0] == errno.ECONNREFUSED:
 				raise ConnectionException(errno.ECONNREFUSED, "Connection refused")
@@ -416,7 +416,7 @@ class TCPServer(coroutine.Coroutine):
 						print "Error in accept(): %s" % exc
 
 					callback = coroutine.WaitForCallback("master readable")
-					reactor.wait_for_readable(self, self.master_socket, callback)
+					reactor.wait_for_readable(self.master_socket, callback)
 					yield callback
 				else:
 					break

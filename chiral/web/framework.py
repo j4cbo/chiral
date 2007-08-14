@@ -72,7 +72,7 @@ def coroutine_page(include_get_vars=True):
 
 				if exc_info:
 					# Shit
-					raise exc_info
+					raise exc_info[0], exc_info[1], exc_info[2]
 
 				# Handle all the postprocessing steps
 				if hasattr(func, "chiral_postprocessors"):
