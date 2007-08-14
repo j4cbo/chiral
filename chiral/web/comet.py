@@ -148,7 +148,7 @@ class CometClockPage(CometPage):
 			)
 			yield self.send_chunk(chunk)
 			curtime += 1
-			yield reactor.schedule(self, callbacktime = curtime)
+			yield reactor.schedule(callbacktime = curtime)
 
 
 class CometClock(object):
