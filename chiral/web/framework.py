@@ -59,10 +59,7 @@ def coroutine_page(include_get_vars=True):
 
 			# Start the coroutine. When it's done, we'll send the response back via
 			# HTTP.
-			response_coro = coroutine.Coroutine(
-				func(**req),
-				autostart=False
-			)
+			response_coro = coroutine.Coroutine(func(**req))
 
 			def completion_handler(retval, exc_info):
 				"""

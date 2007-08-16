@@ -82,7 +82,7 @@ def _as_coro_waitcondition_dec(gen, *args, **kwargs):
 	"""Implementation of as_coro_waitcondition."""
 	# This is a separate function because the decorator module (@decorator) does not provide
 	# for modification of the decorated function docstring.
-	return Coroutine(gen(*args, **kwargs), autostart = False) #pylint: disable-msg=W0142
+	return Coroutine(gen(*args, **kwargs)) #pylint: disable-msg=W0142
 
 def as_coro_waitcondition(func):
 	"""
@@ -457,7 +457,7 @@ class Coroutine(WaitCondition):
 
 	__state_names = "stopped", "running", "suspended", "completed", "failed"
 
-	def __init__(self, generator, default_callback=None, autostart=None, is_watched=False):
+	def __init__(self, generator, default_callback=None, autostart=False, is_watched=False):
 		"""
 		Create a coroutine instance. "generator" is the function or method that contains
 		the body of the coroutine code.
@@ -466,9 +466,6 @@ class Coroutine(WaitCondition):
 		# Don't call WaitCondition.__init__; it raises NotImplementedError to prevent
 		# it from being instantiated directly.
 		#pylint: disable-msg=W0231
-
-		if autostart is None:
-			raise Exception("autostart must be explicitly passed")
 
 		self.state = self.STATE_STOPPED
 		self.result = None

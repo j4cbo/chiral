@@ -78,7 +78,7 @@ class CometPage(coroutine.Coroutine):
 		start_response('200 OK', [('Content-Type', outer_content_type)])
 		environ["chiral.http.set_coro"](self)
 
-		coroutine.Coroutine.__init__(self, self.run(), autostart=False)
+		coroutine.Coroutine.__init__(self, self.run())
 
 	def __iter__(self):
 		

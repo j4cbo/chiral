@@ -370,7 +370,6 @@ class TCPConnection(coroutine.Coroutine):
 		coroutine.Coroutine.__init__(
 			self,
 			self.connection_handler(),
-			autostart = False,
 			default_callback = self.connection_handler_completed
 		)
 
@@ -396,7 +395,7 @@ class TCPServer(coroutine.Coroutine):
 		self.master_socket.bind(self.bind_addr)
 		self.master_socket.listen(5)
 
-		coroutine.Coroutine.__init__(self, self.acceptor(), autostart = False)
+		coroutine.Coroutine.__init__(self, self.acceptor())
 
 	def acceptor(self):
 		"""Main coroutine function.

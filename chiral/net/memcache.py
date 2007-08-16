@@ -870,7 +870,8 @@ import unittest
 @decorator
 def _coro_test_wrapper(func, self):
 	"""Run the test to set things up, then start the reactor."""
-	coro = Coroutine(func(self), is_watched = True, autostart = True)
+	coro = Coroutine(func(self), is_watched = True)
+	coro.start()
 	reactor.run()
 
 	if coro.state != coro.STATE_COMPLETED:
