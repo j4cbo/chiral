@@ -44,7 +44,6 @@ INTROSPECTOR_ROOT_TEMPLATE = """
 				if v is obj:
 					var_name = "as %s in globals" % (k, )
 
-		print "looking up %r in %r: %s" % (obj, frame, var_name)
 		return var_name
    ?>
 
