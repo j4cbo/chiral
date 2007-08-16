@@ -233,7 +233,7 @@ class EpollReactor(Reactor):
 			return False
 
 		for _event_flags, event_fd in events:
-			sock, callback = self._sockets[event_fd][1:3]
+			sock, callback, _interested = self._sockets[event_fd]
 			del self._sockets[event_fd]
 
 			epoll.epoll_ctl(self.epoll_fd, epoll.EPOLL_CTL_DEL, sock.fileno(), 0)
