@@ -1,0 +1,36 @@
+<html>
+<head>
+<script type="text/javascript">
+chiral = {
+	_comet_handler: function(str) {
+		var ul = document.getElementById("ul");
+		var tn = document.createTextNode(str + "\n");
+		var li = document.createElement("li");
+		li.appendChild(tn);
+		ul.appendChild(li);
+		if (ul.childNodes.length > 10) {
+			ul.removeChild(ul.firstChild);
+		}
+	}
+};
+</script>
+<body>
+IRC
+<ul style="margin: 0; padding: 0; list-style: none" id="ul"></ul>
+<iframe src="/irc/" style="width:0;height:0;visibility:hidden;overflow:hidden"></iframe>
+<script type="text/javascript">
+var ul = document.getElementById("ul");
+var xhr = new XMLHttpRequest();
+xhr.open("GET", "/last/", false)
+xhr.send('')
+rows = xhr.responseText.split("\n");
+for(i = 0; i < rows.length; i++) {
+	r = rows[i];
+	var tn = document.createTextNode(rows[i]);
+	var li = document.createElement("li");
+	li.appendChild(tn);
+	ul.appendChild(li);
+}
+</script>
+</body>
+</html>
