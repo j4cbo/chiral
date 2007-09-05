@@ -251,15 +251,74 @@ class EpollReactor(Reactor):
 
 		return True
 
+class KqueueReactor(Reactor):
+	"""
+	Reactor using kqueue()/kevent()
+	"""
+
+	def __init__(self, default_size = 10):
+		Reactor.__init__(self)
+
+		self.queue = kqueue.Kqueue()
+		self._sockets = {}
+
+	def wait_for_readable(self, sock, callback):
+		"""Register callback to be called next time sock is readable."""
+		assert sock.fileno() not in self._sockets
+		self._sockets[sock.fileno()] = sock, callback
+		self.queue.change_events((sock.fileno(), kqueue.EVFILT_READ, kqueue.EV_ADD | kqueue.EV_ONESHOT, 0, None, None))
+
+	def wait_for_writeable(self, sock, callback):
+		"""Register callback to be called next time sock is writeable."""
+		assert sock.fileno() not in self._sockets
+		self._sockets[sock.fileno()] = sock, callback
+		self.queue.change_events((sock.fileno(), kqueue.EVFILT_WRITE, kqueue.EV_ADD | kqueue.EV_ONESHOT, 0, None, None))
+
+	def _run_once(self):
+		"""Run one iteration of the event handler."""
+
+		delay = self.time_to_next_event()
+
+		if delay is None and len(self._sockets) == 0:
+			return False
+
+		try:
+			events = self.queue.kevent(None, return_count = 10, timeout = delay)
+		except KeyboardInterrupt:
+			# Just return.
+			return False
+
+		for ident, _filter, _flags, _fflags, _data, _udata in events:
+			sock, callback = self._sockets[ident]
+			del self._sockets[ident]
+
+			# Yes, we really do want to catch /all/ Exceptions
+			# pylint: disable-msg=W0703
+			try:
+				callback()
+			except Exception:
+				print "Unhandled exception in TCP event %s:" % (callback, )
+				traceback.print_exc() 
+
+		self._handle_scheduled_events()
+
+		return True
+
 # Attempt to import epoll. If it's not available, forget about EpollReactor.
 # "DefaultReactor" is still a class, not a constant.
 #pylint: disable-msg=C0103
 try:
 	import epoll
 	DefaultReactor = EpollReactor
+	del KqueueReactor
 except ImportError:
 	del EpollReactor
-	DefaultReactor = SelectReactor
+	try:
+		from chiral.os import kqueue
+		DefaultReactor = KqueueReactor
+	except ImportError:
+		del KqueueReactor
+		DefaultReactor = SelectReactor
 
 __all__ = [
 	"ConnectionException",
