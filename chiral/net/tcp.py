@@ -48,14 +48,16 @@ class TCPConnection(coroutine.Coroutine):
 		This will be run as a completion callback when the connection handler 
 		terminates; see ``chiral.core.coroutine.Coroutine.add_completion_callback()``.
 
-		By default, this swallows ConnectionClosedException objects, and otherwise
-		does nothing. It may be overridden in a derived class.
+		By default, this swallows ConnectionClosedExceptions, and closes the connection.
+		It may be overridden in a derived class.
 		"""
 
 		if exception:
 			_exc_type, exc_value, _exc_traceback = exception
 			if isinstance(exc_value, ConnectionClosedException):
 				return (None, None)
+
+		self.close()
 
 	def close(self):
 		"""

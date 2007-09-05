@@ -182,8 +182,6 @@ class WaitForNothing(WaitCondition):
 	inside a Coroutine.
 	"""
 
-	__slots__ = "data", 
-
 	def __init__(self, value=None, exc=None):
 		"""
 		Constructor.
@@ -447,6 +445,11 @@ try:
 	_COROUTINES # pylint: disable-msg=W0104
 except NameError:
 	_COROUTINES = weakref.WeakValueDictionary()
+
+
+def dump():
+	for coro in _COROUTINES.values():
+		print repr(coro)
 
 class Coroutine(WaitCondition):
 	"""
