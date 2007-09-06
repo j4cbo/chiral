@@ -197,7 +197,7 @@ class EpollReactor(Reactor):
 	def __init__(self, default_size = 10):
 		Reactor.__init__(self)
 
-		self.epoll_fd = epoll.epoll_create(default_size)
+		self.epoll = epoll.Epoll(default_size)
 
 		self._sockets = {}
 
@@ -205,29 +205,24 @@ class EpollReactor(Reactor):
 		"""Register callback to be called next time sock is readable."""
 		assert sock.fileno() not in self._sockets
 		self._sockets[sock.fileno()] = sock, callback, epoll.EPOLLIN
-		epoll.epoll_ctl(self.epoll_fd, epoll.EPOLL_CTL_ADD, sock.fileno(), epoll.EPOLLIN)
+		self.epoll.ctl(epoll.EPOLL_CTL_ADD, sock.fileno(), epoll.EPOLLIN)
 
 	def wait_for_writeable(self, sock, callback):
 		"""Register callback to be called next time sock is writeable."""
 		assert sock.fileno() not in self._sockets
 		self._sockets[sock.fileno()] = sock, callback, epoll.EPOLLOUT
-		epoll.epoll_ctl(self.epoll_fd, epoll.EPOLL_CTL_ADD, sock.fileno(), epoll.EPOLLOUT)
+		self.epoll.ctl(epoll.EPOLL_CTL_ADD, sock.fileno(), epoll.EPOLLOUT)
 
 	def _run_once(self):
 		"""Run one iteration of the event handler."""
 
 		delay = self.time_to_next_event()
 
-		if delay is None:
-			delay = -1
-		else:
-			delay *= 1000
-
-		if delay == -1 and len(self._sockets) == 0:
+		if delay is None and len(self._sockets) == 0:
 			return False
 
 		try:
-			events = epoll.epoll_wait(self.epoll_fd, 10, int(delay))
+			events = self.epoll.wait(10, delay)
 		except KeyboardInterrupt:
 			# Just return.
 			return False
@@ -236,7 +231,7 @@ class EpollReactor(Reactor):
 			sock, callback, _interested = self._sockets[event_fd]
 			del self._sockets[event_fd]
 
-			epoll.epoll_ctl(self.epoll_fd, epoll.EPOLL_CTL_DEL, sock.fileno(), 0)
+			self.epoll.ctl(epoll.EPOLL_CTL_DEL, sock.fileno(), 0)
 
 			# Yes, we really do want to catch /all/ Exceptions
 			# pylint: disable-msg=W0703
@@ -308,7 +303,7 @@ class KqueueReactor(Reactor):
 # "DefaultReactor" is still a class, not a constant.
 #pylint: disable-msg=C0103
 try:
-	import epoll
+	from  chiral.os import epoll
 	DefaultReactor = EpollReactor
 	del KqueueReactor
 except ImportError:
