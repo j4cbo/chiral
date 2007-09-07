@@ -23,8 +23,8 @@ class _epoll_data(ctypes.Union):
 	_fields_ = [
 		("ptr", ctypes.c_void_p),
 		("fd", ctypes.c_ulong),
-		("u32", ctypes.c_ulong),
-		("u64", ctypes.c_ulonglong)
+		("u32", ctypes.c_uint32),
+		("u64", ctypes.c_uint64)
 	]
 
 class _epoll_event(ctypes.Structure):
