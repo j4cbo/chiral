@@ -229,6 +229,8 @@ class IRCConnection(base.MessagingConnection, tcp.TCPConnection):
 	def connection_handler(self):
 		"""Main connection event handler loop."""
 
+		yield self.connect()
+
 		yield self.sendall(
 			"NICK %s\r\n"
 			"USER %s localhost %s %s\r\n"
@@ -237,7 +239,6 @@ class IRCConnection(base.MessagingConnection, tcp.TCPConnection):
 
 		while True:
 			line = yield self.read_line()
-			print line
 			prefix, command, params = self._parse_line(line)
 
 			if command == "PING":

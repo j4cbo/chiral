@@ -315,6 +315,9 @@ class TCPConnection(coroutine.Coroutine):
 		self.remote_sock.close()
 		self.remote_sock = socket.socket()
 
+		# Set the new socket nonblocking
+		self.remote_sock.setblocking(0) # pylint: disable-msg=E1101
+
 		try:
 			self.remote_sock.connect(self.remote_addr)
 		except socket.error, exc:
@@ -333,6 +336,7 @@ class TCPConnection(coroutine.Coroutine):
 
 				# Wait for the connection to go through
 				reactor.wait_for_writeable(self.remote_sock, blocked_connect_handler)
+				return callback
 
 			elif exc[0] == errno.ECONNREFUSED:
 				raise ConnectionException(errno.ECONNREFUSED, "Connection refused")
