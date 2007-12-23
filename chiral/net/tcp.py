@@ -24,6 +24,8 @@ try:
 except ImportError:
 	_SENDFILE_AVAILABLE = False
 
+_CHIRAL_RELOADABLE = True
+
 class ConnectionOverflowException(ConnectionException):
 	"""Indicates that an excessive amount of data was received by read_line()."""
 

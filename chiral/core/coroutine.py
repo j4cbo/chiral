@@ -36,6 +36,7 @@ _CHIRAL_RELOADABLE = True
 from decorator import decorator
 from collections import deque
 
+import gc
 import sys
 import traceback
 import warnings
@@ -437,14 +438,10 @@ class CoroutineRestart(Exception):
 		self.gen = gen
 
 
-
-# Store a global list of all current coroutines. The try/except block
-# ensures that even if this module is reloaded, only one list of
-# coroutines will ever exist.
-try:
-	_COROUTINES # pylint: disable-msg=W0104
-except NameError:
-	_COROUTINES = weakref.WeakValueDictionary()
+# Store a global list of all current coroutines. The __reload_update__
+# magic prevents xreload.xreload() from wiping out the coroutine list.
+_COROUTINES = weakref.WeakValueDictionary()
+setattr(_COROUTINES, "__reload_update__", lambda oldobj: oldobj)
 
 
 def dump():
@@ -691,3 +688,28 @@ class Coroutine(WaitCondition):
 			failure_info,
 			(", waiting on %s" % self.wait_condition) if self.wait_condition else ""
 		)
+
+	def _chiral_introspect(self):
+		return "coroutine", id(self)
+
+	def introspection_info(self):
+		return (
+			self,
+			( "Attributes:", self.__dict__ ),
+			( "Referrers: ", [ repr(x) for x in gc.get_referrers(self) ] ),
+			( "dir():", dir(self) ),
+		)
+
+class _chiral_introspection(object):
+	def main(self):
+		coro_list = _COROUTINES.values()
+		coro_list.sort(key = id)
+		return coro_list
+
+	def coroutine(self, coro_id):
+		try:
+			coro = _COROUTINES[int(coro_id)]
+		except KeyError:
+			return None
+
+		return coro.introspection_info()
