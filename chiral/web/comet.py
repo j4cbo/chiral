@@ -117,7 +117,7 @@ class CometPage(coroutine.Coroutine):
 		"""
 		Run the application.
 
-		Override this in your CometPage class with a Tasklet generator that 
+		Override this in your CometPage class with a Coroutine generator that 
 		performs whatever tasks the page will do. It may call and yield self.send_chunk
 		to return data to the client.
 		"""

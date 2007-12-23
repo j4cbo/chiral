@@ -439,14 +439,10 @@ class CoroutineRestart(Exception):
 
 
 # Store a global list of all current coroutines. The __reload_update__
-# magic prevents xreload.xreload() from wiping out the coroutine list.
+# magic prevents xreload.xreload() from wiping out the list.
 _COROUTINES = weakref.WeakValueDictionary()
 setattr(_COROUTINES, "__reload_update__", lambda oldobj: oldobj)
 
-
-def dump():
-	for coro in _COROUTINES.values():
-		print repr(coro)
 
 class Coroutine(WaitCondition):
 	"""
@@ -605,16 +601,11 @@ class Coroutine(WaitCondition):
 
 		del self
 
-	def start(self, force=True):
+	def start(self):
 		"""Begin running the coroutine.
 
-		@param force: If force is True, the default, then the tasklet must have
-		been initialized with autostart=False and not have been started yet.
-		If force is False, this method will do nothing if the task is already running.
+		This may only be called if the coroutine is not already running (STATE_STOPPED).
 		"""
-
-		if not force and self.state != self.STATE_STOPPED:
-			return
 
 		assert self.state == self.STATE_STOPPED
 		self.state = self.STATE_SUSPENDED
@@ -690,9 +681,16 @@ class Coroutine(WaitCondition):
 		)
 
 	def _chiral_introspect(self):
+		"""Returns access information for _chiral_introspection for this object."""
+
 		return "coroutine", id(self)
 
 	def introspection_info(self):
+		"""Returns the introspection information for this coroutine.
+
+		This should only be called by _chiral_introspection.coroutine().
+		"""
+
 		return (
 			self,
 			( "Attributes:", self.__dict__ ),

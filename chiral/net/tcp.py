@@ -38,7 +38,7 @@ class TCPConnection(coroutine.Coroutine):
 		"""
 		Main event processing loop.
 
-		The connection_handler() method will be run as a Tasklet when the TCPConnection
+		The connection_handler() method will be run as a Coroutine when the TCPConnection
 		is initialized. It should be overridden in the derived class.
 		"""
 		raise NotImplementedError
@@ -184,7 +184,7 @@ class TCPConnection(coroutine.Coroutine):
 		else:
 			# Don't bother. (try_now is set False by functions like read_line,
 			# which attempt the low-level operations themselves first to avoid
-			# creating Tasklets unnecessarily.)
+			# creating coroutines unnecessarily.)
 			cb_func(self.remote_sock, blocked_operation_handler)
 			return callback
 

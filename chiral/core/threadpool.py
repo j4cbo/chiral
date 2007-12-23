@@ -11,7 +11,6 @@ Example::
 
 from __future__ import with_statement
 
-import gc
 import collections
 import threading
 import socket
@@ -36,6 +35,8 @@ class ThreadPoolWatcher(tcp.TCPConnection):
 		setattr(self, "__reload_update__", lambda oldobj: oldobj)
 
 		self.pool = pool
+		self.write_socket = None
+
 		# Don't actually initialize until restart() is called the first time.
 
 	def restart(self):
@@ -190,7 +191,8 @@ def run_in_thread(operation, *args, **kwargs):
 		pool.watcher.restart()
 
 	# XXX need a good algorithm for managing thread pool size
-	if not pool.worker_threads or (pool.active_workers == len(pool.worker_threads) and pool.active_workers < 4):
+	if not pool.worker_threads or \
+	   (pool.active_workers == len(pool.worker_threads) and pool.active_workers < 4):
 		worker = WorkerThread()
 		worker.start()
 		pool.worker_threads[id(worker)] = worker
@@ -215,13 +217,13 @@ class _chiral_introspection(object):
 		out.extend(pool.worker_threads.itervalues())
 		return out
 
-        def thread(self, thread_id):
-                try:
-                        thread = ThreadPoolContainer.pool.worker_threads[int(thread_id)]
-                except KeyError:
-                        return None
+	def thread(self, thread_id):
+		try:
+			thread = ThreadPoolContainer.pool.worker_threads[int(thread_id)]
+		except KeyError:
+			return None
 
-                return thread.introspection_info()
+		return thread.introspection_info()
 
 __all__ = [ "run_in_thread" ]
 
