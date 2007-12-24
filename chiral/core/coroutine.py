@@ -622,7 +622,8 @@ class Coroutine(WaitCondition):
 		"""
 
 		self.is_watched = True
-		self.start(force = False)
+		if self.state == self.STATE_STOPPED:
+			self.start()
 
 		if self.state in (self.STATE_COMPLETED, self.STATE_FAILED):
 			# If we've alread waiting_coro has already returned, just return its state now.
