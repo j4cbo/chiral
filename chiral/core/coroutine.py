@@ -1,9 +1,11 @@
 """
 Chiral coroutine system.
 
-The chiral.coroutine module differs from most coroutine systems in that there is no single
-scheduler. Each coroutine is an independent `Coroutine` instance, which runs as long as possible
-until an external event (generally a callback) is required before it can continue.
+The chiral.coroutine module differs from most coroutine systems in that it does not provide a
+single central scheduler. Each coroutine is an independent `Coroutine` instance, which runs as
+long as possible until an external event (generally a callback) is required before it can
+continue. In Chiral, the Reactor (see chiral.net.netcore) acts as a scheduler, but it is not
+tied directly into the workings of the Coroutine class. 
 
 A coroutine can be defined as a standalone generator function, or by making a subclass of
 `Coroutine` with a generator function as a member. In either case, the generator is created by

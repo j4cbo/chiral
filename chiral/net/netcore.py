@@ -105,7 +105,7 @@ class Reactor(object):
 					raise TypeError("callbacktime must be a number or datetime")
 
 		else:
-			raise ValueError("must specify either callbacktime or delay")
+			callbacktime = now
 
 		callback = coroutine.WaitForCallback("reactor.schedule(callbacktime=%s)" % (callbacktime, ))
 
