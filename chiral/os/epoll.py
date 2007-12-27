@@ -11,11 +11,10 @@ import ctypes
 from ctypes.util import find_library
 import os
 
-libc = ctypes.CDLL(find_library("c"))
-
 try:
+	libc = ctypes.CDLL(find_library("c"))
 	getattr(libc, "epoll_create")
-except AttributeError:
+except AttributeError, TypeError:
 	raise ImportError("epoll not available on this system")
 
 class _epoll_data(ctypes.Union):

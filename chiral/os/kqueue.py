@@ -11,11 +11,10 @@ import ctypes
 from ctypes.util import find_library
 import os
 
-libc = ctypes.CDLL(find_library("c"))
-
 try:
+	libc = ctypes.CDLL(find_library("c"))
 	getattr(libc, "kqueue")
-except AttributeError:
+except AttributeError, TypeError:
 	raise ImportError("kqueue not available on this system")
 
 class _kevent(ctypes.Structure):

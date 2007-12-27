@@ -26,6 +26,13 @@ except ImportError:
 
 _CHIRAL_RELOADABLE = True
 
+if hasattr(errno, "WSAEWOULDBLOCK"):
+	_AGAIN = (errno.EAGAIN, errno.WSAEWOULDBLOCK)
+elif errno.EAGAIN != errno.EWOULDBLOCK:
+	_AGAIN = (errno.EAGAIN, errno.EWOULDBLOCK)
+else:
+	_AGAIN = (errno.EAGAIN, )
+
 class ConnectionOverflowException(ConnectionException):
 	"""Indicates that an excessive amount of data was received by read_line()."""
 
@@ -106,7 +113,7 @@ class TCPConnection(coroutine.Coroutine):
 		try:
 			new_data = self.remote_sock.recv(max_len)
 		except socket.error, exc:
-			if exc[0] == errno.EAGAIN:
+			if exc[0] in _AGAIN:
 				# OK, we're going to need to spawn a new coroutine.
 				return self._read_line_coro(max_len, delimiter)
 			else:
@@ -176,7 +183,7 @@ class TCPConnection(coroutine.Coroutine):
 			try:
 				res = socket_op(parameter)
 			except socket.error, exc:
-				if exc[0] == errno.EAGAIN:
+				if exc[0] in _AGAIN:
 					cb_func(self.remote_sock, blocked_operation_handler)
 					return callback
 				else:
@@ -224,7 +231,7 @@ class TCPConnection(coroutine.Coroutine):
 		except socket.error, exc:
 			if exc[0] in (errno.EPIPE, errno.EBADF):
 				raise ConnectionClosedException()
-			elif exc[0] != errno.EAGAIN:
+			elif exc[0] not in _AGAIN:
 				raise exc
 		else:
 			# Only return now if /all/ the data was written
@@ -270,7 +277,7 @@ class TCPConnection(coroutine.Coroutine):
 		try:
 			res = sendfile(self.remote_sock.fileno(), infile.fileno(), offset, length)
 		except OSError, exc:
-			if exc.errno == errno.EAGAIN:
+			if exc.errno in _AGAIN:
 				callback = coroutine.WaitForCallback("sendfile")
 
 				def blocked_operation_handler():
@@ -419,7 +426,7 @@ class TCPServer(coroutine.Coroutine):
 				try:
 					client_socket, client_addr = self.master_socket.accept()
 				except socket.error, exc:
-					if exc[0] != errno.EAGAIN:
+					if exc[0] not in _AGAIN:
 						print "Error in accept(): %s" % exc
 
 					callback = coroutine.WaitForCallback("master readable")
