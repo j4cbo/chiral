@@ -14,7 +14,7 @@ import os
 try:
 	libc = ctypes.CDLL(find_library("c"))
 	getattr(libc, "kqueue")
-except AttributeError, TypeError:
+except (AttributeError, TypeError):
 	raise ImportError("kqueue not available on this system")
 
 class _kevent(ctypes.Structure):
