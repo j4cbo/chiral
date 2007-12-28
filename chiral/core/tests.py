@@ -54,9 +54,9 @@ class CoroutineTests(unittest.TestCase):
 
 	def check_failed(self, coro, exc):
 		"""Verify that coro has failed with exc"""
+		self.assertEqual(coro.state, coroutine.Coroutine.STATE_FAILED)
 		return_value = coro.result[0]
 		exc_type, exc_value = coro.result[1][:2]
-		self.assertEqual(coro.state, coroutine.Coroutine.STATE_FAILED)
 		self.assertEqual((return_value, exc_type, exc_value), (None, type(exc), exc))
 		self.assertEqual(coro.wait_condition, None)
 
@@ -64,6 +64,7 @@ class CoroutineTests(unittest.TestCase):
 		"""Check a simple, immediately-returning Coroutine."""
 
 		coro = coroutine.Coroutine(coroutine_gen_returning(42))
+		coro.start()
 
 		self.assertEqual(coro.state, coroutine.Coroutine.STATE_COMPLETED)
 		self.assertEqual(coro.result, (42, None))
@@ -89,6 +90,8 @@ class CoroutineTests(unittest.TestCase):
 			default_callback = dummy_callback,
 			is_watched = True
 		)
+		coro.start()
+
 		self.check_failed(coro, exc)
 
 	def test_decorator(self):
@@ -107,6 +110,7 @@ class CoroutineTests(unittest.TestCase):
 
 		callback = coroutine.WaitForCallback()
 		coro = coroutine.Coroutine(coroutine_gen_yielding(callback))
+		coro.start()
 
 		self.check_suspended(coro, callback)
 
@@ -124,6 +128,7 @@ class CoroutineTests(unittest.TestCase):
 		exc = TestException(42)
 		callback = coroutine.WaitForCallback()
 		coro = coroutine.Coroutine(coroutine_gen_yielding(callback), is_watched=True)
+		coro.start()
 
 		self.check_suspended(coro, callback)
 
@@ -138,31 +143,33 @@ class CoroutineTests(unittest.TestCase):
 		self.assert_("42" in repr(callback))
 
 		coro = coroutine.Coroutine(coroutine_gen_yielding(callback))
+		coro.start()
 
 		self.check_completed(coro, 42)
 
 	def test_wait_for_coroutine(self):
-		"""Check handling of a Coroutine yielding a WaitForCoroutine."""
+		"""Check handling of a Coroutine yielding another Coroutine."""
 
 		inner_coro = coroutine.Coroutine(coroutine_gen_returning(42))
-		coro = coroutine.Coroutine(coroutine_gen_yielding(coroutine.WaitForCoroutine(inner_coro)))
+		coro = coroutine.Coroutine(coroutine_gen_yielding(inner_coro))
+		coro.start()
 
 		self.check_completed(coro, 42)
 
 	def test_wait_for_unfinished(self):
-		"""Check that WaitForCoroutine will call back a parent coroutine properly."""
+		"""Check that yielding a coroutine will call back a parent coroutine properly."""
 
 		inner_cb = coroutine.WaitForCallback()
 		inner_coro = coroutine.Coroutine(coroutine_gen_yielding(inner_cb))
+		inner_coro.start()
 
-		waitcondition = coroutine.WaitForCoroutine(inner_coro)
-		coro = coroutine.Coroutine(coroutine_gen_yielding(waitcondition))
+		coro = coroutine.Coroutine(coroutine_gen_yielding(inner_coro))
+		coro.start()
 
-		self.assert_(repr(inner_coro) in repr(waitcondition))
-		self.assert_(repr(waitcondition) in repr(coro))
+		self.assert_(repr(inner_coro) in repr(coro))
 
 		self.check_suspended(inner_coro, inner_cb)
-		self.check_suspended(coro, waitcondition)
+		self.check_suspended(coro, inner_coro)
 
 		inner_cb(42)
 
