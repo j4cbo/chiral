@@ -130,6 +130,10 @@ def returns_waitcondition(func):
 	else:
 		return func
 
+class CoroutineKilledException(Exception):
+	"""Indicates that the raising coroutine was terminated by calling kill() on it."""
+	pass
+
 
 class WaitCondition(object):
 	"""
@@ -482,6 +486,50 @@ class Coroutine(WaitCondition):
 		if autostart:
 			self.start()
 
+	def _terminate(self, result, failure):
+		"""
+		Clean up and call completion callbacks after the coroutine has terminated.
+		"""
+
+		self.result = (result, failure)
+
+		# Remove reference for GC
+		self.gen = None
+
+		for callback in self.completion_callbacks:
+			try:
+				callback_result = callback(self.result[0], self.result[1])
+
+				# Completion callbacks may modify the result of the coroutine
+				# by returning a tuple (to swallow exceptions, for example, or
+				# pass the result through some sort of filter).
+
+				if callback_result is not None:
+					self.result = callback_result
+
+			except Exception: #pylint: disable-msg=W0703
+				# If the completion callback itself raises an Exception, make
+				# it as if the coroutine failed with that exception.
+				self.result = (None, sys.exc_info())
+
+			if self.result[1] is None:
+				self.state = self.STATE_COMPLETED
+			else:
+				self.state = self.STATE_FAILED
+
+		callback = None
+		del self.completion_callbacks[:]
+
+		if self.result[1] is not None and not self.is_watched:
+			# The exception was not handled, so log a warning.
+			exc_type, exc_obj, exc_traceback = self.result[1]
+			warnings.warn("Orphan coro %s failed: %s" % (
+				self, ''.join(traceback.format_exception(
+					exc_type, exc_obj, exc_traceback
+				))
+			))
+
+
 	def resume(self, next_value, next_exception=None):
 		"""
 		Run the coroutine as long as possible.
@@ -513,7 +561,8 @@ class Coroutine(WaitCondition):
 				else:
 					result = None
 
-				self.result = (result, None)
+				self._terminate(result, None)
+				break
 
 			except CoroutineRestart, exc:
 				# Restart with a new Coroutine or generator
@@ -531,47 +580,7 @@ class Coroutine(WaitCondition):
 			except Exception: #pylint: disable-msg=W0703
 				# An (unexpected) exception was thrown; terminate the coroutine.
 				self.state = self.STATE_FAILED
-				self.result = (None, sys.exc_info())
-
-			# If either of the two exception handlers fired, handle the completion callbacks.
-			if self.result is not None:
-
-				# Remove reference for GC
-				self.gen = None
-
-				for callback in self.completion_callbacks:
-					try:
-						callback_result = callback(self.result[0], self.result[1])
-
-						# Completion callbacks may modify the result of the coroutine
-						# by returning a tuple (to swallow exceptions, for example, or
-						# pass the result through some sort of filter).
-
-						if callback_result is not None:
-							self.result = callback_result
-
-					except Exception: #pylint: disable-msg=W0703
-						# If the completion callback itself raises an Exception, make
-						# it as if the coroutine failed with that exception.
-						self.result = (None, sys.exc_info())
-
-					if self.result[1] is None:
-						self.state = self.STATE_COMPLETED
-					else:
-						self.state = self.STATE_FAILED
-
-				callback = None
-				del self.completion_callbacks[:]
-
-				if self.result[1] is not None and not self.is_watched:
-					# The exception was not handled, so log a warning.
-					exc_type, exc_obj, exc_traceback = self.result[1]
-					warnings.warn("Orphan coro %s failed: %s" % (
-						self, ''.join(traceback.format_exception(
-							exc_type, exc_obj, exc_traceback
-						))
-					))
-
+				self._terminate(None, sys.exc_info())
 				break
 
 			if gen_result is None:
@@ -663,6 +672,33 @@ class Coroutine(WaitCondition):
 		"""
 
 		self.completion_callbacks.remove(callback)
+
+	def kill(self):
+		"""
+		Forcefully kill a coroutine.
+
+		If the coroutine is not in STATE_RUNNING or STATE_SUSPENDED, this does nothing.
+		A suspended coroutine will have its current wait condition unbound; its completion
+		callback will then be called with a CoroutineKilledException. If the coroutine is
+		currently running (i.e. it, or something it calls, kills itself) then kill() will
+		set it to STATE_CONDEMNED, and it will terminate after it next yields.
+		"""
+
+		if self.state == self.STATE_SUSPENDED:
+			self.wait_condition.unbind(self)
+			self.wait_condition = None
+			self.state = self.STATE_FAILED
+
+			# XXX: Dirty hack to get a traceback to the current point. 
+			try:
+				raise CoroutineKilledException()
+			except CoroutineKilledException:
+				pass
+
+			self._terminate(None, sys.exc_info())
+
+		elif self.state == self.STATE_RUNNING:
+			assert False
 
 	def __repr__(self):
 
