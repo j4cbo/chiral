@@ -49,6 +49,7 @@ class TCPConnection(coroutine.Coroutine):
 		is initialized. It should be overridden in the derived class.
 		"""
 		raise NotImplementedError
+		yield
 
 	def connection_handler_completed(self, value, exception):
 		"""
