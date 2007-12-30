@@ -122,6 +122,14 @@ class Reactor(object):
 		else:
 			return None
 
+	def wait_for_readable(self, sock):
+		"""Return a WaitCondition for readability on sock."""
+		return self.WaitForReadable(sock, self)
+
+	def wait_for_writeable(self, sock, callback):
+		"""Return a WaitCondition for writeability on sock."""
+		return self.WaitForWriteable(sock, self)
+
 
 class SelectReactor(Reactor):
 	"""Reactor using select()"""
@@ -131,15 +139,70 @@ class SelectReactor(Reactor):
 		self._read_sockets = {}
 		self._write_sockets = {}
 
-	def wait_for_readable(self, sock, callback):
-		"""Wait for sock to be readable."""
-		assert sock not in self._read_sockets
-		self._read_sockets[sock] = callback
+	class WaitForReadable(coroutine.WaitCondition):
+		"""
+		Select for readability on the given socket in the next iteration of
+		the reactor's select() loop.
+		"""
 
-	def wait_for_writeable(self, sock, callback):
-		"""Wait for sock to be writeable."""
-		assert sock not in self._write_sockets
-		self._write_sockets[sock] = callback
+		def __init__(self, sock, reactor):
+			"""
+			Constructor.
+
+			sock will be passed to select.select(); reactor must be a SelectReactor.
+			"""
+			self.sock = sock
+			self.reactor = reactor
+			self.bound_coro = None
+
+		def bind(self, coro):
+			"""Bind to coro, adding the socket to the select list."""
+			assert self.bound_coro is None
+			assert coro not in self.reactor._read_sockets
+			self.reactor._read_sockets[self.sock] = coro
+			self.bound_coro = coro
+
+		def unbind(self, coro):
+			"""Unbind from coro and remove the socket from the select list."""
+			assert self.bound_coro is coro
+			del self.reactor._read_sockets[self.sock]
+			self.bound_coro = None
+
+		def __repr__(self):
+			return "<SelectReactor.WaitForReadable: fd %r>" % (self.sock.fileno(), )
+
+
+	class WaitForWriteable(coroutine.WaitCondition):
+		"""
+		Select for writeability on the given socket in the next iteration of
+		the reactor's select() loop.
+		"""
+
+		def __init__(self, sock, reactor):
+			"""
+			Constructor.
+
+			sock will be passed to select.select(); reactor must be a SelectReactor.
+			"""
+			self.sock = sock
+			self.reactor = reactor
+			self.bound_coro = None
+
+		def bind(self, coro):
+			"""Bind to coro, adding the socket to the select list."""
+			assert self.bound_coro is None
+			assert coro not in self.reactor._write_sockets
+			self.reactor._write_sockets[self.sock] = coro
+			self.bound_coro = coro
+
+		def unbind(self, coro):
+			"""Unbind from coro and remove the socket from the select list."""
+			assert self.bound_coro is coro
+			del self.reactor._write_sockets[self.sock]
+			self.bound_coro = None
+
+		def __repr__(self):
+			return "<SelectReactor.WaitForWriteable: fd %r>" % (self.sock.fileno(), )
 
 	def _run_once(self):
 		"""Run one iteration of the event handler."""
@@ -165,17 +228,17 @@ class SelectReactor(Reactor):
 
 		def _handle_events(items, event_list):
 			"""
-			For each item in items: call the callback in event_list whose
+			For each item in items: resume the coroutine in event_list whose key is that item.
 			key is that item.
 			"""
 			for key in items:
-				callback = event_list[key]
+				coro = event_list[key]
 				del event_list[key]
 
 				# Yes, we really do want to catch /all/ Exceptions
 				# pylint: disable-msg=W0703
 				try:
-					callback()
+					coro.resume(None)
 				except Exception:
 					print "Unhandled exception in TCP event %s:" % (callback, )
 					traceback.print_exc() 
@@ -303,7 +366,7 @@ class KqueueReactor(Reactor):
 # "DefaultReactor" is still a class, not a constant.
 #pylint: disable-msg=C0103
 try:
-	from  chiral.os import epoll
+	from chiral.os import epoll
 	DefaultReactor = EpollReactor
 	del KqueueReactor
 except ImportError:
@@ -315,8 +378,10 @@ except ImportError:
 		del KqueueReactor
 		DefaultReactor = SelectReactor
 
+#reactor = DefaultReactor()
+reactor = SelectReactor()
+		
 __all__ = [
 	"ConnectionException",
 	"ConnectionClosedException",
-	"DefaultReactor"
 ]

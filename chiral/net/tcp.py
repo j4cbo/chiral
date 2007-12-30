@@ -67,25 +67,39 @@ class TCPConnection(coroutine.Coroutine):
 			if isinstance(exc_value, ConnectionClosedException):
 				return (None, None)
 
-		self.close()
+		if self.remote_sock is not None:
+			self.close()
 
 	def close(self):
 		"""
 		Call self.close() on a connection to perform a clean shutdown.
 		"""
-
-		self.remote_sock.close()
+		if self.remote_sock is not None:
+			self.remote_sock.close()
+			self.remote_sock = None
 
 	@coroutine.as_coro
 	def _read_line_coro(self, max_len, delimiter):
 		"""Helper coroutine created by read_line if data is not immediately available."""
 		while True:
+			# Wait for the socket to be readable
+			yield reactor.wait_for_readable(self.remote_sock)
+
 			# Read more data
-			new_data = yield self.recv(max_len, try_now = False)
+			try:
+				new_data = self.remote_sock.recv(max_len)
+			except socket.error, exc:
+				if exc[0] in _AGAIN:
+					# Nope, still not readable.
+					continue
+				else:
+					raise exc
+
 			if not new_data:
 				raise ConnectionClosedException()
 
 			self._buffer += new_data
+
 			# Check if the delimiter is already in the buffer.
 			if delimiter in self._buffer[:max_len]:
 				out, self._buffer = self._buffer.split(delimiter, 1)
@@ -95,6 +109,8 @@ class TCPConnection(coroutine.Coroutine):
 			# we've had an overflow
 			if len(self._buffer) > max_len:
 				raise ConnectionOverflowException()
+
+			# No delimiter, but still room in the buffer: loop around again.
 
 
 	@coroutine.returns_waitcondition
@@ -147,76 +163,75 @@ class TCPConnection(coroutine.Coroutine):
 		octets at a time.
 		"""
 
+		# If we have enough bytes already, just return them
+		if len(self._buffer) >= length:
+			out = self._buffer[:length]
+			self._buffer = self._buffer[length:]
+			raise StopIteration(out)
+
 		while True:
-			# If we have enough bytes, return them
-			if len(self._buffer) >= length:
-				out = self._buffer[:length]
-				self._buffer = self._buffer[length:]
-				raise StopIteration(out)
-
-			# Otherwise, read more
+			# If not, attempt to recv()
 			bytes_left = length - len(self._buffer)
-			new_data = yield self.recv(min(bytes_left, read_increment))
-			if not new_data:
-				raise ConnectionClosedException()
 
-			self._buffer += new_data
-
-	def _async_socket_operation(self, socket_op, cb_func, parameter, try_now):
-		"""Helper function for asynchronous operations."""
-
-		callback = coroutine.WaitForCallback(cb_func)
-
-		def blocked_operation_handler():
-			"""Callback for asynchronous operations."""
-			# Prevent pylint from complaining about "except Exception"
-			# pylint: disable-msg=W0703
 			try:
-				res = socket_op(parameter)
-			except Exception, exc:
-				callback.throw(exc)
-			else:
-				callback(res)
-
-		if try_now:
-			# Attempt socket_op now; only pass it to the callback if it
-			# returns EAGAIN.
-			try:
-				res = socket_op(parameter)
+				new_data = self.remote_sock.recv(min(bytes_left, read_increment))
 			except socket.error, exc:
-				if exc[0] in _AGAIN:
-					cb_func(self.remote_sock, blocked_operation_handler)
-					return callback
-				else:
+				# Reraise any unexpected errors.
+				if exc[0] not in _AGAIN:
 					raise exc
-		else:
-			# Don't bother. (try_now is set False by functions like read_line,
-			# which attempt the low-level operations themselves first to avoid
-			# creating coroutines unnecessarily.)
-			cb_func(self.remote_sock, blocked_operation_handler)
-			return callback
+			else:
+				# We successfully recv()'d; add the data to the buffer
+				# and then check if it's enough.
 
-		return coroutine.WaitForNothing(res)
+				if not new_data:
+					raise ConnectionClosedException()
 
-	@coroutine.returns_waitcondition
-	def recv(self, buflen, try_now=True):
+				self._buffer += new_data
+				if len(self._buffer) >= length:
+					out = self._buffer[:length]
+					self._buffer = self._buffer[length:]
+					raise StopIteration(out)
+
+			# Wait for readability, then try the recv again.
+			yield reactor.wait_for_readable(self.remote_sock)
+
+
+
+	@coroutine.as_coro_waitcondition
+	def recv(self, buflen):
 		"""
-		Read data from the socket. Set try_now to False if a low-level recv() has
-		already been attempted.
+		Read data from the socket.
 		"""
-		return self._async_socket_operation(
-			self.remote_sock.recv,
-			reactor.wait_for_readable,
-			buflen,
-			try_now
-		)
+		while True:
+			# Try reading the data.
+			try:
+				res = self.remote_sock.recv(buflen)
+			except socket.error, exc:
+				# If we would have blocked, try again later.
+				if exc[0] not in _AGAIN:
+					raise exc
+			else:
+				raise StopIteration(res)
+
+			yield reactor.wait_for_readable(self.remote_sock)
+
 
 	@coroutine.as_coro_waitcondition
 	def _sendall_coro(self, data):
 		"""Helper coroutine created by sendall if not all data could be sent."""
 		while data:
-			res = yield self.send(data)
+
+			yield reactor.wait_for_readable(self)
+
+			try:
+				res = self.remote_sock.send(data)
+			except socket.error, exc:
+				# If the write would block, just loop around and try later.
+				if exc[0] not in _AGAIN:
+					raise exc
+
 			data = data[res:]
+
 
 	@coroutine.returns_waitcondition
 	def sendall(self, data):
@@ -244,21 +259,29 @@ class TCPConnection(coroutine.Coroutine):
 		# There's still more data to be sent, so hand things off to the coroutine.
 		return self._sendall_coro(data)
 
-	@coroutine.returns_waitcondition
-	def send(self, data, try_now=True):
+
+	@coroutine.as_coro_waitcondition
+	def send(self, data):
 		"""
 		Send data, and return the number of bytes actually sent. Note that the
 		send() system call does not guarantee that all of data will actually be
 		sent; in most cases, sendall() should be used.
 		"""
-		return self._async_socket_operation(
-			self.remote_sock.send,
-			reactor.wait_for_writeable,
-			data,
-			try_now
-		)
+		while True:
+			# Try writing the data.
+			try:
+				res = self.remote_sock.send(data)
+			except socket.error, exc:
+				# If we would have blocked, try again later.
+				if exc[0] not in _AGAIN:
+					raise exc
+			else:
+				raise StopIteration(res)
 
-	@coroutine.returns_waitcondition
+			yield reactor.wait_for_writeable(self.remote_sock)
+
+
+	@coroutine.as_coro_waitcondition
 	def sendfile(self, infile, offset, length):
 		"""
 		Send up to len bytes of data from infile, starting at offset.
@@ -269,45 +292,33 @@ class TCPConnection(coroutine.Coroutine):
 		if not _SENDFILE_AVAILABLE:
 			# We don't have the sendfile() system call available, so just do the
 			# read and write ourselves.
-			# XXX: This should respect offset.
+			# XXX: This should respect offset, and not suck.
 			data = infile.read(length)
-			return self.sendall(data)
+			yield self.sendall(data)
+			return
 
-		# sendfile() is available. It takes a number of parameters, so we can't just use
-		# the _async_socket_operation helper.
 		try:
 			res = sendfile(self.remote_sock.fileno(), infile.fileno(), offset, length)
 		except OSError, exc:
-			if exc.errno in _AGAIN:
-				callback = coroutine.WaitForCallback("sendfile")
+			if exc.errno in (errno.EPIPE, errno.EBADF):
+				raise ConnectionClosedException()
+			elif exc.errno not in _AGAIN:
+				raise exc
 
-				def blocked_operation_handler():
-					"""Callback for asynchronous operations."""
-					# Prevent pylint from complaining about "except Exception"
-					# pylint: disable-msg=W0703
-					try:
-						res = sendfile(self.remote_sock.fileno(), infile.fileno(), offset, length)
-					except OSError, exc:
-						if exc.errno in (errno.EPIPE, errno.EBADF):
-							callback.throw(ConnectionClosedException())
-						else:
-							callback.throw(exc)
-					except Exception, exc:
-						callback.throw(exc)
-					else:
-						callback(res[1])
+		yield reactor.wait_for_writeable(self.remote_sock)
 
-				reactor.wait_for_writeable(self.remote_sock, blocked_operation_handler)
-				return callback
-			elif exc.errno in (errno.EPIPE, errno.EBADF):
+		try:
+			res = sendfile(self.remote_sock.fileno(), infile.fileno(), offset, length)
+		except OSError, exc:
+			if exc.errno in (errno.EPIPE, errno.EBADF):
 				raise ConnectionClosedException()
 			else:
 				raise exc
 
-		# sendfile() worked, so we're done.
-		return coroutine.WaitForNothing(res[1])
+		raise StopIteration(res[1])
 
-	@coroutine.returns_waitcondition
+
+	@coroutine.as_coro_waitcondition
 	def connect(self):
 		"""
 		Connect or reconnect to the remote server.
@@ -331,29 +342,22 @@ class TCPConnection(coroutine.Coroutine):
 		try:
 			self.remote_sock.connect(self.remote_addr)
 		except socket.error, exc:
-			if exc[0] == errno.EINPROGRESS:
-				# The socket is connecting.
-
-				callback = coroutine.WaitForCallback("connect")
-
-				def blocked_connect_handler():
-					"""Callback for asynchronous connect"""
-					res = self.remote_sock.getsockopt(socket.SOL_SOCKET, socket.SO_ERROR)
-					if res == 0:
-						callback()
-					else:
-						callback.throw(ConnectionException(res, os.strerror(res)))
-
-				# Wait for the connection to go through
-				reactor.wait_for_writeable(self.remote_sock, blocked_connect_handler)
-				return callback
-
-			elif exc[0] == errno.ECONNREFUSED:
+			if exc[0] == errno.ECONNREFUSED:
 				raise ConnectionException(errno.ECONNREFUSED, "Connection refused")
+			elif exc[0] == errno.EINPROGRESS:
+				pass
 			else:
 				raise exc
 		else:
-			return coroutine.WaitForNothing()
+			return
+
+		# Wait for the connect to finish, then check its result
+		yield reactor.wait_for_writeable(self.remote_sock)
+
+		res = self.remote_sock.getsockopt(socket.SOL_SOCKET, socket.SO_ERROR)
+		if res != 0:
+			raise ConnectionException(res, os.strerror(res))
+
 
 	def __init__(self, remote_addr, sock=None, server=None):
 		"""
@@ -429,10 +433,7 @@ class TCPServer(coroutine.Coroutine):
 				except socket.error, exc:
 					if exc[0] not in _AGAIN:
 						print "Error in accept(): %s" % exc
-
-					callback = coroutine.WaitForCallback("master readable")
-					reactor.wait_for_readable(self.master_socket, callback)
-					yield callback
+					yield reactor.wait_for_readable(self.master_socket)
 				else:
 					break
 
