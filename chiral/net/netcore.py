@@ -122,13 +122,6 @@ class Reactor(object):
 		else:
 			return None
 
-	def wait_for_readable(self, sock):
-		"""Return a WaitCondition for readability on sock."""
-		return self.WaitForReadable(sock, self)
-
-	def wait_for_writeable(self, sock, callback):
-		"""Return a WaitCondition for writeability on sock."""
-		return self.WaitForWriteable(sock, self)
 
 
 class SelectReactor(Reactor):
@@ -204,6 +197,14 @@ class SelectReactor(Reactor):
 		def __repr__(self):
 			return "<SelectReactor.WaitForWriteable: fd %r>" % (self.sock.fileno(), )
 
+	def wait_for_readable(self, sock):
+		"""Return a WaitCondition for readability on sock."""
+		return self.WaitForReadable(sock, self)
+
+	def wait_for_writeable(self, sock):
+		"""Return a WaitCondition for writeability on sock."""
+		return self.WaitForWriteable(sock, self)
+
 	def _run_once(self):
 		"""Run one iteration of the event handler."""
 
@@ -240,7 +241,7 @@ class SelectReactor(Reactor):
 				try:
 					coro.resume(None)
 				except Exception:
-					print "Unhandled exception in TCP event %s:" % (callback, )
+					print "Unhandled exception in TCP event %s:" % (coro, )
 					traceback.print_exc() 
 
 
@@ -264,17 +265,47 @@ class EpollReactor(Reactor):
 
 		self._sockets = {}
 
-	def wait_for_readable(self, sock, callback):
-		"""Register callback to be called next time sock is readable."""
-		assert sock.fileno() not in self._sockets
-		self._sockets[sock.fileno()] = sock, callback, epoll.EPOLLIN
-		self.epoll.ctl(epoll.EPOLL_CTL_ADD, sock.fileno(), epoll.EPOLLIN)
+	class WaitForEvent(coroutine.WaitCondition):
+		"""Wait for an event."""
 
-	def wait_for_writeable(self, sock, callback):
-		"""Register callback to be called next time sock is writeable."""
-		assert sock.fileno() not in self._sockets
-		self._sockets[sock.fileno()] = sock, callback, epoll.EPOLLOUT
-		self.epoll.ctl(epoll.EPOLL_CTL_ADD, sock.fileno(), epoll.EPOLLOUT)
+		def __init__(self, sock, reactor, event):
+			"""
+			Constructor.
+
+			sock will be passed to epoll_ctl(); reactor must be an EpollReactor.
+			"""
+
+			self.sock = sock
+			self.reactor = reactor
+			self.event = event
+			self.bound_coro = None
+
+		def bind(self, coro):
+			"""Bind to coro, adding the socket to the epoll list."""
+			assert self.bound_coro is None
+			assert self.sock.fileno() not in self._sockets
+			self.reactor._sockets[self.sock.fileno()] = self.sock, coro, self.event
+			self.reactor.epoll.ctl(epoll.EPOLL_CTL_ADD, self.sock.fileno(), self.event)
+			self.bound_coro = coro
+
+		def unbind(self, coro):
+			"""Unbind from coro and remove the socket from the select list."""
+			assert self.bound_coro is coro
+			assert self.sock.fileno() in self._sockets
+			del self.reactor._sockets[self.sock.fileno()]
+			self.reactor.epoll.ctl(epoll.EPOLL_CTL_DEL, self.sock.fileno(), 0)
+			self.bound_coro = None
+
+		def __repr__(self):
+			return "<EpollReactor.WaitForEvent: fd %r>" % (self.sock.fileno(), )
+
+	def wait_for_readable(self, sock):
+		"""Return a WaitCondition for readability on sock."""
+		return self.WaitForEvent(sock, self, epoll.EPOLLIN)
+
+	def wait_for_writeable(self, sock):
+		"""Return a WaitCondition for writeability on sock."""
+		return self.WaitForWriteable(sock, self, epoll.EPOLLOUT)
 
 	def _run_once(self):
 		"""Run one iteration of the event handler."""
@@ -291,7 +322,7 @@ class EpollReactor(Reactor):
 			return False
 
 		for _event_flags, event_fd in events:
-			sock, callback, _interested = self._sockets[event_fd]
+			sock, coro, _interested = self._sockets[event_fd]
 			del self._sockets[event_fd]
 
 			self.epoll.ctl(epoll.EPOLL_CTL_DEL, sock.fileno(), 0)
@@ -300,9 +331,9 @@ class EpollReactor(Reactor):
 			# pylint: disable-msg=W0703
 
 			try:
-				callback()
+				coro.resume(None)
 			except Exception:
-				print "Unhandled exception in TCP event %s:" % (callback, )
+				print "Unhandled exception in TCP event %s:" % (coro, )
 				traceback.print_exc() 
 
 		self._handle_scheduled_events()
@@ -320,17 +351,61 @@ class KqueueReactor(Reactor):
 		self.queue = kqueue.Kqueue()
 		self._sockets = {}
 
-	def wait_for_readable(self, sock, callback):
-		"""Register callback to be called next time sock is readable."""
-		assert sock.fileno() not in self._sockets
-		self._sockets[sock.fileno()] = sock, callback
-		self.queue.change_events((sock.fileno(), kqueue.EVFILT_READ, kqueue.EV_ADD | kqueue.EV_ONESHOT, 0, None, None))
+	class WaitForEvent(coroutine.WaitCondition):
+		"""Wait for an event."""
 
-	def wait_for_writeable(self, sock, callback):
-		"""Register callback to be called next time sock is writeable."""
-		assert sock.fileno() not in self._sockets
-		self._sockets[sock.fileno()] = sock, callback
-		self.queue.change_events((sock.fileno(), kqueue.EVFILT_WRITE, kqueue.EV_ADD | kqueue.EV_ONESHOT, 0, None, None))
+		def __init__(self, sock, reactor, event):
+			"""
+			Constructor.
+
+			reactor must be a KqueueReactor.
+			"""
+
+			self.sock = sock
+			self.reactor = reactor
+			self.event = event
+			self.bound_coro = None
+
+		def bind(self, coro):
+			"""Bind to coro, adding the socket to the epoll list."""
+			assert self.bound_coro is None
+			assert self.sock.fileno() not in self.reactor._sockets
+			self.reactor._sockets[self.sock.fileno()] = self.sock, coro
+			self.reactor.queue.change_events((
+				self.sock.fileno(),
+				self.event,
+				kqueue.EV_ADD | kqueue.EV_ONESHOT,
+				0,
+				None,
+				None
+			))
+			self.bound_coro = coro
+
+		def unbind(self, coro):
+			"""Unbind from coro and remove the socket from the select list."""
+			assert self.bound_coro is coro
+			assert self.sock.fileno() in self.reactor._sockets
+			del self.reactor._sockets[self.sock.fileno()]
+			self.reactor.queue.change_events((
+				self.sock.fileno(),
+				self.event,
+				kqueue.EV_DELETE,
+				0,
+				None,
+				None
+			))
+			self.bound_coro = None
+
+		def __repr__(self):
+			return "<KqueueReactor.WaitForEvent: fd %r>" % (self.sock.fileno(), )
+
+	def wait_for_readable(self, sock):
+		"""Return a WaitCondition for readability on sock."""
+		return self.WaitForEvent(sock, self, kqueue.EVFILT_READ)
+
+	def wait_for_writeable(self, sock):
+		"""Return a WaitCondition for writeability on sock."""
+		return self.WaitForWriteable(sock, self, kqueue.EVFILT_WRITE)
 
 	def _run_once(self):
 		"""Run one iteration of the event handler."""
@@ -347,15 +422,15 @@ class KqueueReactor(Reactor):
 			return False
 
 		for ident, _filter, _flags, _fflags, _data, _udata in events:
-			sock, callback = self._sockets[ident]
+			sock, coro = self._sockets[ident]
 			del self._sockets[ident]
 
 			# Yes, we really do want to catch /all/ Exceptions
 			# pylint: disable-msg=W0703
 			try:
-				callback()
+				coro.resume(None)
 			except Exception:
-				print "Unhandled exception in TCP event %s:" % (callback, )
+				print "Unhandled exception in TCP event %s:" % (coro, )
 				traceback.print_exc() 
 
 		self._handle_scheduled_events()
@@ -378,8 +453,7 @@ except ImportError:
 		del KqueueReactor
 		DefaultReactor = SelectReactor
 
-#reactor = DefaultReactor()
-reactor = SelectReactor()
+reactor = DefaultReactor()
 		
 __all__ = [
 	"ConnectionException",
