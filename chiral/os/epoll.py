@@ -96,34 +96,29 @@ class Epoll(object):
 
 		return output
 
-__all__ = [
-	"Epoll"
-]
 
 # From sys/epoll.h
-EVENTS = {
-	"EPOLLIN": 0x001,
-	"EPOLLPRI": 0x002,
-	"EPOLLOUT": 0x004,
-	"EPOLLRDNORM": 0x040,
-	"EPOLLRDBAND": 0x080,
-	"EPOLLWRNORM": 0x100,
-	"EPOLLWRBAND": 0x200,
-	"EPOLLMSG": 0x400,
-	"EPOLLERR": 0x008,
-	"EPOLLHUP": 0x010,
-	"EPOLLONESHOT": (1 << 30),
-	"EPOLLET": (1 << 31)
-}
+EPOLLIN = 0x001
+EPOLLPRI = 0x002
+EPOLLOUT = 0x004
+EPOLLRDNORM = 0x040
+EPOLLRDBAND = 0x080
+EPOLLWRNORM = 0x100
+EPOLLWRBAND = 0x200
+EPOLLMSG = 0x400
+EPOLLERR = 0x008
+EPOLLHUP = 0x010
+EPOLLONESHOT = (1 << 30)
+EPOLLET = (1 << 31)
 
-OPS = {
-	"EPOLL_CTL_ADD": 1,
-	"EPOLL_CTL_DEL": 2,
-	"EPOLL_CTL_MOD": 3
-}
+EPOLL_CTL_ADD = 1
+EPOLL_CTL_DEL = 2
+EPOLL_CTL_MOD = 3
 
-for key, value in EVENTS.items() + OPS.items():
-	locals()[key] = value
-	__all__.append(key)
-
-del key, value
+__all__ = [
+	"Epoll"
+	"EPOLLIN", "EPOLLPRI", "EPOLLOUT", "EPOLLRDNORM", "EPOLLRDBAND",
+	"EPOLLWRNORM", "EPOLLWRBAND", "EPOLLMSG", "EPOLLERR", "EPOLLHUP",
+	"EPOLLONESHOT", "EPOLLET",
+	"EPOLL_CTL_ADD", "EPOLL_CTL_DEL", "EPOLL_CTL_MOD"
+]

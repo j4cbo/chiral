@@ -69,8 +69,6 @@ class Kqueue(object):
 		for index, event_tuple in enumerate(events):
 			ident, efilter, flags, fflags, data, udata = event_tuple
 
-			assert efilter in FILTERS.values()
-
 			if udata is None:
 				udata = 0
 
@@ -120,40 +118,35 @@ class Kqueue(object):
 
 		return output
 
-__all__ = [
-	"Kqueue"
-]
 
 # From sys/event.h
-FILTERS = {
-	# Filters
-	"EVFILT_READ": (-1),
-	"EVFILT_WRITE": (-2),
-	"EVFILT_AIO": (-3),
-	"EVFILT_VNODE": (-4),
-	"EVFILT_PROC": (-5),
-	"EVFILT_SIGNAL": (-6),
-	"EVFILT_TIMER": (-7),
-	"EVFILT_MACHPORT": (-8),
-	"EVFILT_FS": (-9)
-}
+EVFILT_READ = -1
+EVFILT_WRITE = -2
+EVFILT_AIO = -3
+EVFILT_VNODE = -4
+EVFILT_PROC = -5
+EVFILT_SIGNAL = -6
+EVFILT_TIMER = -7
+EVFILT_MACHPORT = -8
+EVFILT_FS = -9
 
-FLAGS = {
-	"EV_ADD": 0x0001,	# add event to kq (implies enable)
-	"EV_DELETE": 0x0002,	# delete event from kq
-	"EV_ENABLE": 0x0004,	# enable event
-	"EV_DISABLE": 0x0008,	# disable event (not reported)
-	"EV_ONESHOT": 0x0010,	# only report one occurrence
-	"EV_CLEAR": 0x0020,	# clear event state after reporting
-	"EV_SYSFLAGS": 0xF000,	# reserved by system
-	"EV_FLAG0": 0x1000,	# filter-specific flag
-	"EV_FLAG1": 0x2000,	# filter-specific flag
-	"EV_EOF": 0x8000,	# EOF detected
-	"EV_ERROR": 0x4000,	# error, data contains errno
-}
+EV_ADD = 0x0001		# add event to kq (implies enable)
+EV_DELETE = 0x0002	# delete event from kq
+EV_ENABLE = 0x0004	# enable event
+EV_DISABLE = 0x0008	# disable event (not reported)
+EV_ONESHOT = 0x0010	# only report one occurrence
+EV_CLEAR = 0x0020	# clear event state after reporting
+EV_SYSFLAGS = 0xF000	# reserved by system
+EV_FLAG0 = 0x1000	# filter-specific flag
+EV_FLAG1 = 0x2000	# filter-specific flag
+EV_EOF = 0x8000		# EOF detected
+EV_ERROR = 0x4000	# error, data contains errno
 
-for key, value in FILTERS.items() + FLAGS.items():
-	locals()[key] = value
-	__all__.append(key)
-
-del key, value
+__all__ = [
+	"Kqueue",
+	"EVFILT_READ", "EVFILT_WRITE", "EVFILT_AIO", "EVFILT_VNODE",
+	"EVFILT_PROC", "EVFILT_SIGNAL", "EVFILT_TIMER", "EVFILT_MACHPORT",
+	"EVFILT_FS",
+	"EV_ADD", "EV_DELETE", "EV_ENABLE", "EV_DISABLE", "EV_ONESHOT",
+	"EV_CLEAR", "EV_SYSFLAGS", "EV_FLAG0", "EV_FLAG1", "EV_EOF", "EV_ERROR"
+]
