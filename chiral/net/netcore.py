@@ -201,6 +201,9 @@ class SelectReactor(Reactor):
 			key is that item.
 			"""
 			for key in items:
+				if key not in event_list:
+					continue
+
 				coro = event_list[key]
 				del event_list[key]
 
@@ -290,6 +293,9 @@ class EpollReactor(Reactor):
 			return False
 
 		for _event_flags, event_fd in events:
+			if event_fd not in self._sockets:
+				continue
+
 			sock, coro, _interested = self._sockets[event_fd]
 			del self._sockets[event_fd]
 
@@ -373,7 +379,7 @@ class KqueueReactor(Reactor):
 
 	def wait_for_writeable(self, sock):
 		"""Return a WaitCondition for writeability on sock."""
-		return self.WaitForWriteable(sock, self, kqueue.EVFILT_WRITE)
+		return self.WaitForEvent(sock, self, kqueue.EVFILT_WRITE)
 
 	def _run_once(self):
 		"""Run one iteration of the event handler."""
@@ -390,6 +396,9 @@ class KqueueReactor(Reactor):
 			return False
 
 		for ident, _filter, _flags, _fflags, _data, _udata in events:
+			if ident not in self._sockets:
+				continue
+
 			sock, coro = self._sockets[ident]
 			del self._sockets[ident]
 

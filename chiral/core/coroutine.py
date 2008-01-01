@@ -130,6 +130,18 @@ def returns_waitcondition(func):
 	else:
 		return func
 
+
+def swallow_kill(res, exc):
+	"""
+	Helper function that swallows CoroutineKilledExceptions.
+
+	Usage: some_coro.add_completion_callback(coroutine.swallow_kill)
+	"""
+
+	if exc is not None and exc[0] is CoroutineKilledException:
+		return (None, None)
+
+
 class CoroutineKilledException(Exception):
 	"""Indicates that the raising coroutine was terminated by calling kill() on it."""
 	pass

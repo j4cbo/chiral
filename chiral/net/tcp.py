@@ -417,6 +417,17 @@ class TCPServer(coroutine.Coroutine):
 
 		coroutine.Coroutine.__init__(self, self.acceptor())
 
+		self.add_completion_callback(self.close_callback)
+
+	def close_callback(self, res, exc):
+		"""Close self.master_socket.
+
+		This is used as a completion callback for acceptor, to ensure that the
+		master socket is closed if acceptor() terminates or is killed.
+		"""
+
+		self.master_socket.close()
+
 	def acceptor(self):
 		"""Main coroutine function.
 
