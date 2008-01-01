@@ -12,6 +12,7 @@ import heapq
 import select
 import traceback
 import weakref
+import errno
 
 class ConnectionException(Exception):
 	"""Indicates that the connection has failed and will be closed."""
@@ -264,7 +265,15 @@ class EpollReactor(Reactor):
 			assert self.bound_coro is coro
 			assert self.sock.fileno() in self.reactor._sockets
 			del self.reactor._sockets[self.sock.fileno()]
-			self.reactor.epoll.ctl(epoll.EPOLL_CTL_DEL, self.sock.fileno(), 0)
+			try:
+				self.reactor.epoll.ctl(epoll.EPOLL_CTL_DEL, self.sock.fileno(), 0)
+			except OSError, exc:
+				if exc.errno == errno.ENOENT:
+					# The fd isn't in the list anymore anyway; fine.
+					pass
+				else:
+					raise exc
+
 			self.bound_coro = None
 
 		def __repr__(self):
@@ -360,14 +369,22 @@ class KqueueReactor(Reactor):
 			assert self.bound_coro is coro
 			assert self.sock.fileno() in self.reactor._sockets
 			del self.reactor._sockets[self.sock.fileno()]
-			self.reactor.queue.change_events((
-				self.sock.fileno(),
-				self.event,
-				kqueue.EV_DELETE,
-				0,
-				None,
-				None
-			))
+			try:
+				self.reactor.queue.change_events((
+					self.sock.fileno(),
+					self.event,
+					kqueue.EV_DELETE,
+					0,
+					None,
+					None
+				))
+			except OSError, exc:
+				if exc.errno == errno.ENOENT:
+					# The fd isn't in the list anymore anyway; fine.
+					pass
+				else:
+					raise exc
+
 			self.bound_coro = None
 
 		def __repr__(self):

@@ -131,7 +131,7 @@ def returns_waitcondition(func):
 		return func
 
 
-def swallow_kill(res, exc):
+def swallow_kill(_res, exc):
 	"""
 	Helper function that swallows CoroutineKilledExceptions.
 
@@ -712,8 +712,17 @@ class Coroutine(WaitCondition):
 		elif self.state == self.STATE_RUNNING:
 			assert False
 
-	def __repr__(self):
+	def __enter__(self):
+		"""Context manager entrance function: start this coroutine."""
+		self.start()
+		return self
 
+	def __exit__(self, _exc_type, _exc_value, _exc_info):
+		"""Context manager exit function: kill this coroutine no matter what."""
+		self.add_completion_callback(swallow_kill)
+		self.kill()
+
+	def __repr__(self):
 		if self.state in (Coroutine.STATE_COMPLETED, Coroutine.STATE_FAILED):
 			failure_info = " with %r / %r" % self.result
 		else:
@@ -750,12 +759,15 @@ class Coroutine(WaitCondition):
 		)
 
 class _chiral_introspection(object):
+	"""Module-level introspection routines."""
 	def main(self):
+		"""main info: return a list of all current coroutines."""
 		coro_list = _COROUTINES.values()
 		coro_list.sort(key = id)
 		return coro_list
 
 	def coroutine(self, coro_id):
+		"""Look up the coroutine with the given id and return its introspection_info()."""
 		try:
 			coro = _COROUTINES[int(coro_id)]
 		except KeyError:
