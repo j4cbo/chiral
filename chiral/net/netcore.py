@@ -123,7 +123,6 @@ class Reactor(object):
 			return None
 
 
-
 class SelectReactor(Reactor):
 	"""Reactor using select()"""
 
@@ -132,78 +131,47 @@ class SelectReactor(Reactor):
 		self._read_sockets = {}
 		self._write_sockets = {}
 
-	class WaitForReadable(coroutine.WaitCondition):
+	class WaitForEvent(coroutine.WaitCondition):
 		"""
 		Select for readability on the given socket in the next iteration of
 		the reactor's select() loop.
 		"""
 
-		def __init__(self, sock, reactor):
+		def __init__(self, sock, reactor_instance, event_list):
 			"""
 			Constructor.
 
 			sock will be passed to select.select(); reactor must be a SelectReactor.
 			"""
 			self.sock = sock
-			self.reactor = reactor
+			self.reactor = reactor_instance
+			self.event_list = event_list
 			self.bound_coro = None
 
 		def bind(self, coro):
 			"""Bind to coro, adding the socket to the select list."""
 			assert self.bound_coro is None
-			assert coro not in self.reactor._read_sockets
-			self.reactor._read_sockets[self.sock] = coro
+			assert coro not in self.event_list
+			self.event_list[self.sock] = coro
 			self.bound_coro = coro
 
 		def unbind(self, coro):
 			"""Unbind from coro and remove the socket from the select list."""
 			assert self.bound_coro is coro
-			del self.reactor._read_sockets[self.sock]
+			del self.event_list[self.sock]
 			self.bound_coro = None
 
 		def __repr__(self):
-			return "<SelectReactor.WaitForReadable: fd %r>" % (self.sock.fileno(), )
+			return "<SelectReactor.WaitForEvent: fd %r>" % (self.sock.fileno(), )
 
-
-	class WaitForWriteable(coroutine.WaitCondition):
-		"""
-		Select for writeability on the given socket in the next iteration of
-		the reactor's select() loop.
-		"""
-
-		def __init__(self, sock, reactor):
-			"""
-			Constructor.
-
-			sock will be passed to select.select(); reactor must be a SelectReactor.
-			"""
-			self.sock = sock
-			self.reactor = reactor
-			self.bound_coro = None
-
-		def bind(self, coro):
-			"""Bind to coro, adding the socket to the select list."""
-			assert self.bound_coro is None
-			assert coro not in self.reactor._write_sockets
-			self.reactor._write_sockets[self.sock] = coro
-			self.bound_coro = coro
-
-		def unbind(self, coro):
-			"""Unbind from coro and remove the socket from the select list."""
-			assert self.bound_coro is coro
-			del self.reactor._write_sockets[self.sock]
-			self.bound_coro = None
-
-		def __repr__(self):
-			return "<SelectReactor.WaitForWriteable: fd %r>" % (self.sock.fileno(), )
 
 	def wait_for_readable(self, sock):
 		"""Return a WaitCondition for readability on sock."""
-		return self.WaitForReadable(sock, self)
+		return self.WaitForEvent(sock, self, self._read_sockets)
 
 	def wait_for_writeable(self, sock):
 		"""Return a WaitCondition for writeability on sock."""
-		return self.WaitForWriteable(sock, self)
+		return self.WaitForEvent(sock, self, self._write_sockets)
 
 	def _run_once(self):
 		"""Run one iteration of the event handler."""
@@ -268,7 +236,7 @@ class EpollReactor(Reactor):
 	class WaitForEvent(coroutine.WaitCondition):
 		"""Wait for an event."""
 
-		def __init__(self, sock, reactor, event):
+		def __init__(self, sock, reactor_instance, event):
 			"""
 			Constructor.
 
@@ -276,14 +244,14 @@ class EpollReactor(Reactor):
 			"""
 
 			self.sock = sock
-			self.reactor = reactor
+			self.reactor = reactor_instance
 			self.event = event
 			self.bound_coro = None
 
 		def bind(self, coro):
 			"""Bind to coro, adding the socket to the epoll list."""
 			assert self.bound_coro is None
-			assert self.sock.fileno() not in self._sockets
+			assert self.sock.fileno() not in self.reactor._sockets
 			self.reactor._sockets[self.sock.fileno()] = self.sock, coro, self.event
 			self.reactor.epoll.ctl(epoll.EPOLL_CTL_ADD, self.sock.fileno(), self.event)
 			self.bound_coro = coro
@@ -291,7 +259,7 @@ class EpollReactor(Reactor):
 		def unbind(self, coro):
 			"""Unbind from coro and remove the socket from the select list."""
 			assert self.bound_coro is coro
-			assert self.sock.fileno() in self._sockets
+			assert self.sock.fileno() in self.reactor._sockets
 			del self.reactor._sockets[self.sock.fileno()]
 			self.reactor.epoll.ctl(epoll.EPOLL_CTL_DEL, self.sock.fileno(), 0)
 			self.bound_coro = None
@@ -305,7 +273,7 @@ class EpollReactor(Reactor):
 
 	def wait_for_writeable(self, sock):
 		"""Return a WaitCondition for writeability on sock."""
-		return self.WaitForWriteable(sock, self, epoll.EPOLLOUT)
+		return self.WaitForEvent(sock, self, epoll.EPOLLOUT)
 
 	def _run_once(self):
 		"""Run one iteration of the event handler."""
@@ -345,7 +313,7 @@ class KqueueReactor(Reactor):
 	Reactor using kqueue()/kevent()
 	"""
 
-	def __init__(self, default_size = 10):
+	def __init__(self):
 		Reactor.__init__(self)
 
 		self.queue = kqueue.Kqueue()
@@ -354,7 +322,7 @@ class KqueueReactor(Reactor):
 	class WaitForEvent(coroutine.WaitCondition):
 		"""Wait for an event."""
 
-		def __init__(self, sock, reactor, event):
+		def __init__(self, sock, reactor_instance, event):
 			"""
 			Constructor.
 
@@ -362,7 +330,7 @@ class KqueueReactor(Reactor):
 			"""
 
 			self.sock = sock
-			self.reactor = reactor
+			self.reactor = reactor_instance
 			self.event = event
 			self.bound_coro = None
 
@@ -454,7 +422,7 @@ except ImportError:
 		DefaultReactor = SelectReactor
 
 reactor = DefaultReactor()
-		
+
 __all__ = [
 	"ConnectionException",
 	"ConnectionClosedException",
