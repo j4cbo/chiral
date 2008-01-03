@@ -3,8 +3,8 @@ Chiral coroutine system.
 
 The chiral.coroutine module differs from most coroutine systems in that it does not provide a
 single central scheduler. Each coroutine is an independent `Coroutine` instance, which runs as
-long as possible until an external event (generally a callback) is required before it can
-continue. In Chiral, the Reactor (see chiral.net.netcore) acts as a scheduler, but it is not
+long as possible until an external event (a WaitCondition) is required before it can
+continue. In Chiral, the Reactor (see `chiral.net.netcore`) acts as a scheduler, but it is not
 tied directly into the workings of the Coroutine class. 
 
 A coroutine can be defined as a standalone generator function, or by making a subclass of
@@ -24,7 +24,7 @@ as the result of the yield expression. The core coroutine module defines four Wa
 classes; they should be sufficient for all uses. See the `chiral.net.tcp` module for examples
 of code that works with WaitConditions.
 
-If a coroutine yields any value other than a WaitCondition, it behaves as though it had yielded
+If a coroutine yields any value other than a ``WaitCondition``, it behaves as though it had yielded
 a `WaitForNothing`.
 """
 
@@ -417,8 +417,7 @@ class CoroutineMutex(object):
 
 class CoroutineRestart(Exception):
 	"""
-	Raise from within a generator to indicate that the coroutine should be restarted
-	with a new generator.
+	Raise from within a generator to indicate that the coroutine should be restarted with a new generator.
 
 	While "raise StopIteration(value)" is like a return statement, CoroutineRestart
 	implememts an optimized tail-call or tail-recursion. A generator, or a Coroutine
@@ -774,3 +773,18 @@ class _chiral_introspection(object):
 			return None
 
 		return coro.introspection_info()
+
+__all__ = [
+	"as_coro",
+	"as_coro_waitcondition",
+	"returns_waitcondition",
+	"swallow_kill",
+	"CoroutineKilledException",
+	"WaitCondition",
+	"WaitForNothing",
+	"WaitForCallback",
+	"WaitForCallbackArgs",
+	"CoroutineMutex",
+	"CoroutineRestart",
+	"Coroutine"
+]
