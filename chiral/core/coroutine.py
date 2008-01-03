@@ -77,26 +77,8 @@ def as_coro(gen, *args, **kwargs):
 	Create a new Coroutine with each call to the wrapped function.
 	"""
 
-	return Coroutine(gen(*args, **kwargs), autostart = True) #pylint: disable-msg=W0142
-
-
-@decorator
-def _as_coro_waitcondition_dec(gen, *args, **kwargs):
-	"""Implementation of as_coro_waitcondition."""
-	# This is a separate function because the decorator module (@decorator) does not provide
-	# for modification of the decorated function docstring.
 	return Coroutine(gen(*args, **kwargs)) #pylint: disable-msg=W0142
 
-def as_coro_waitcondition(func):
-	"""
-	Create a new Coroutine with each call to the wrapped function, and return a WaitCondition for its result.
-
-	The docstring will also be amended to indicate that it returns a WaitCondition.
-	"""
-
-	func.__doc__ = trim(func.__doc__) + "\n\nReturns a WaitCondition."
-
-	return _as_coro_waitcondition_dec(func)
 
 @decorator
 def _returns_waitcondition_dec(func, *args, **kwargs):
@@ -135,7 +117,13 @@ def swallow_kill(_res, exc):
 	"""
 	Helper function that swallows CoroutineKilledExceptions.
 
-	Usage: some_coro.add_completion_callback(coroutine.swallow_kill)
+	Usage::
+
+		some_coro.add_completion_callback(coroutine.swallow_kill)
+
+	If some_coro is killed with `Coroutine.kill`, it acts as though it had raised a CoroutineKilledException.
+	If that exception is not handled somewhere, the affected coroutine will be considered an orphan,
+	and its untimely failure will be logged. Adding ``swallow_kill`` will suppress the warning.
 	"""
 
 	if exc is not None and exc[0] is CoroutineKilledException:
@@ -149,7 +137,7 @@ class CoroutineKilledException(Exception):
 
 class WaitCondition(object):
 	"""
-	Represents a condition which a Coroutine may need to suspend execution for.
+	Represents a condition for which a Coroutine may need to suspend execution.
 	"""
 
 	def __init__(self):
@@ -165,13 +153,12 @@ class WaitCondition(object):
 
 		If the WaitConditon is already ready, this will return a tuple (value, exc_info)
 		of the value or exception that was returned. In this case, the WaitCondition is
-		not considered bound; attempting to call unbind() later will fail.
+		not considered bound; attempting to call `unbind` later will fail.
 
-		Otherwise, return None. Once the value is available,
-		coro.delayed_value_available(value, exc_info) will be called, and the
-		WaitCondition will be considered unbound again.
+		Otherwise, return None. Once the value is available, `Coroutine.resume` will be
+		called, and the WaitCondition will be considered unbound again.
 
-		This should not generally be called except by `Coroutine.resume()`.
+		This should not generally be called except by `Coroutine.resume`.
 		"""
 		raise NotImplementedError
 
@@ -181,7 +168,7 @@ class WaitCondition(object):
 
 		Raises an AssertionError if the WaitCondition is not currently bound.
 
-		This should not generally be called except by `Coroutine.resume()`.
+		This should not generally be called except by `Coroutine.kill`.
 		"""
 		raise NotImplementedError
 
@@ -191,12 +178,12 @@ class WaitForNothing(WaitCondition):
 
 	This class is generally used only to ensure type-safety. Yielding anything that is not a
 	WaitCondition from a coroutine causes that object to be passed back in as the result of
-	the yield expression; "yield value" is generally the same as "yield WaitForNothing(value)".
+	the yield expression; ``yield value`` is generally the same as ``yield WaitForNothing(value)``.
 	However, a WaitForNothing may carry an exception instead of a value; yielding it will
 	cause that exception to be raised.
 
-	The "returns_waitcondition" decorator wraps all non-WaitConditions that a function returns
-	in WaitForNothing objects, unless Python is running in opitimized mode. This helps ensure
+	The `returns_waitcondition` decorator wraps all non-WaitConditions that a function returns
+	in WaitForNothing objects, unless Python is running in optimized mode. This helps ensure
 	that one does not accidentally use its return values directly without yielding them from
 	inside a Coroutine.
 	"""
@@ -213,13 +200,11 @@ class WaitForNothing(WaitCondition):
 		self.data = (value, exc)
 
 	def bind(self, _coro):
-		"""Bind to a given coroutine; see `WaitCondition.bind()`."""
-
+		"""Bind to a given coroutine."""
 		return self.data
 
 	def unbind(self, _coro):
-		"""Unbind from a given coroutine; see `WaitCondition.unbind()`."""
-
+		"""Unbind from a given coroutine."""
 		raise AssertionError("WaitForNothing instances cannot be bound.")
 
 	def __repr__(self):
@@ -227,11 +212,11 @@ class WaitForNothing(WaitCondition):
 
 class WaitForCallback(WaitCondition):
 	"""
-	A callable WaitCondition which resumes the bound WaitCondition once it is called.
+	A callable WaitCondition which resumes the bound coroutine once it is called.
 
 	WaitForCallback instances expect a single argument, which will be passed back to their
 	bound coroutine as the result. For a version which takes positional arguments and returns
-	a tuple, use WaitForCallbackArgs.
+	a tuple, use `WaitForCallbackArgs`.
 	"""
 
 	def __init__(self, description=None):
@@ -240,7 +225,6 @@ class WaitForCallback(WaitCondition):
 
 		:Parameters:
 			- `description`: The purpose of the callback, to be included in ``repr()``.
-
 		"""
 		# Don't call WaitCondition.__init__; it raises NotImplementedError to prevent
 		# it from being instantiated directly.
@@ -250,22 +234,26 @@ class WaitForCallback(WaitCondition):
 		self.bound_coro = None
 
 	def bind(self, coro):
-		"""Bind to a given coroutine; see `WaitCondition.bind()`."""
+		"""Bind to a given coroutine."""
 		self.bound_coro = coro
 
 	def unbind(self, coro):
-		"""Unbind from a given coroutine; see `WaitCondition.unbind()`."""
+		"""Unbind from a given coroutine."""
 		assert self.bound_coro is coro
 		self.bound_coro = None
 
 	def __call__(self, value=None):
-		"""Cause value to be the return value of the WaitCondition."""
+		"""Cause `value` to be the return value of the WaitCondition."""
 		assert self.bound_coro
 		self.bound_coro.resume(value)
 		self.bound_coro = None
 
 	def throw(self, exc=None):
-		"""Cause the given exception (or sys.exc_info()) to be raised in the bound coroutine."""
+		"""Raise an Exception in the bound coroutine.
+
+		If `exc` is None, ``sys.exc_info()`` will be raised instead.
+		"""
+
 		if exc is None:
 			exc = sys.exc_info()
 		elif isinstance(exc, Exception):
@@ -294,7 +282,8 @@ class WaitForCallbackArgs(WaitCondition):
 		"""
 		Constructor.
 
-		The "description" parameter will be included in repr(); it is not otherwise used.
+		:Parameters:
+			- `description`: The purpose of the callback, to be included in ``repr()``.
 		"""
 		# Don't call WaitCondition.__init__; it raises NotImplementedError to prevent
 		# it from being instantiated directly.
@@ -304,18 +293,33 @@ class WaitForCallbackArgs(WaitCondition):
 		self.bound_coro = None
 
 	def bind(self, coro):
-		"""Bind to a given coroutine; see `WaitCondition.bind()`."""
+		"""Bind to a given coroutine."""
 		self.bound_coro = coro
 
 	def unbind(self, coro):
-		"""Unbind from a given coroutine; see `WaitCondition.unbind()`."""
+		"""Unbind from a given coroutine."""
 		assert self.bound_coro is coro
 		self.bound_coro = None
 
 	def __call__(self, *args):
-		"""Cause args to be the return value of the WaitCondition."""
+		"""Cause `args` to be the return value of the WaitCondition."""
 		assert self.bound_coro
 		self.bound_coro.resume(args)
+		self.bound_coro = None
+
+	def throw(self, exc=None):
+		"""Raise an Exception in the bound coroutine.
+
+		If `exc` is None, ``sys.exc_info()`` will be raised instead.
+		"""
+
+		if exc is None:
+			exc = sys.exc_info()
+		elif isinstance(exc, Exception):
+			exc = (type(exc), exc, None)
+
+		assert self.bound_coro
+		self.bound_coro.resume(None, exc)
 		self.bound_coro = None
 
 	def __repr__(self):
@@ -326,7 +330,7 @@ class WaitForCallbackArgs(WaitCondition):
 
 
 class _CoroutineMutexManager(object):
-	"""Context manager for CoroutineMutex objects."""
+	"""Context manager for `CoroutineMutex` objects."""
 
 	# Context managers are opaque objects; they should not have any public methods.
 	#pylint: disable-msg=R0903
@@ -350,25 +354,27 @@ class _CoroutineMutexManager(object):
 
 class CoroutineMutex(object):
 	"""
-	An object that regulates access to a resource.
+	A Coroutint-based mutex object.
 
 	One CoroutineMutex represents one controlled-access resource. For example, a TCPConnection
-	giving access to a server may be protected by a WaitForMutex to ensure that multiple transactions
-	are not opened at once.
+	giving access to a server may be protected by a CoroutineMutex to ensure that multiple
+	transactions are not started at once.
 
-	CoroutineMutex objects have one important method, `acquire()`. This returns a WaitCondition, which
-	will resule the coroutine once the mutex is available. The WaitCondition will result in a context
-	manager, as specified in PEP 342. It should immediately be passed to a ``with`` statement, like so::
+	CoroutineMutex objects have one important method, `acquire()`. This returns a `WaitCondition`,
+	which will resume the coroutine once the mutex is available. The WaitCondition will result
+	in a context manager, as specified in PEP 342, which should immediately be passed to a ``with``
+	statement::
 
 		with (yield connection.mutex.acquire()):
-			connection.sendall("command\r\n")
+			connection.sendall("command\\r\\n")
 			result = connection.read_line()
 
 	Note that in Python 2.5, the ``with`` statement requres ``from future import with_statement``.
 
-	Alternately, the context manager that results from yielding `acquire()` may be ignored, and `release()`
-	called to release the mutex. However, doing so reduces exception safety compared to the with statement
-	options (an unhandled exception could cause the mutex to never be released), so it is not reccomended.
+	Alternately, the context manager that results from yielding `acquire` may be ignored, and
+	`release` called to release the mutex. However, doing so reduces exception safety compared
+	to the ``with`` statement method (an unhandled exception could cause the mutex to never be
+	released), so it is not reccomended.
 	"""
 
 	def __init__(self, description=None):
@@ -384,7 +390,10 @@ class CoroutineMutex(object):
 	@returns_waitcondition
 	def acquire(self):
 		"""
-		Attempt to acquire the mutex. Yields a WaitCondition which returns once the mutex is claimed.
+		Attempt to acquire the mutex.
+
+		Returns a WaitCondition which resumes the coroutine once the mutex is claimed. The
+		result of the WaitCondition is a context manager which should immediately be invoked.
 		"""
 
 		if self.current_owner is not None:
@@ -398,7 +407,9 @@ class CoroutineMutex(object):
 
 	def release(self):
 		"""
-		Force the mutex to be released. Use with caution; the context manager is preferable.
+		Force the mutex to be released.
+
+		Use with caution; the context manager produced by `acquire` is safer.
 		"""
 		self.current_owner = None
 		if len(self.queue) > 0:
@@ -419,9 +430,9 @@ class CoroutineRestart(Exception):
 	"""
 	Raise from within a generator to indicate that the coroutine should be restarted with a new generator.
 
-	While "raise StopIteration(value)" is like a return statement, CoroutineRestart
-	implememts an optimized tail-call or tail-recursion. A generator, or a Coroutine
-	that has not been start()ed yet, should be passed to __init__.
+	Where "raise StopIteration(value)" is like a return statement, CoroutineRestart
+	is analogous to an optimized tail-call or tail-recursion. A generator, or a Coroutine
+	that has not been `start`-ed yet, should be passed to __init__.
 
 	For example, these two functions act almost equivalently::
 
@@ -432,7 +443,6 @@ class CoroutineRestart(Exception):
 
 				if not self.more_requests:
 					break
-				
 
 	And::
 
@@ -443,14 +453,18 @@ class CoroutineRestart(Exception):
 			if self.more_requests:
 				raise CoroutineRestart(self.handle_connection())
 
-
 	There are a few differences; for example, code reloads will not take effect during the
 	lifetime of the former handle_connection(), but they will for the latter. One could also
-	put the request handling code in its own coroutine, at the expense of greater
-	complexity.
+	put the request handling code in its own coroutine; choose which method to use based on
+	semantic correctness and readability.
 	"""
 
 	def __init__(self, gen):
+		"""Constructor.
+
+		:Parameters:
+			- `gen`: The new generator or unstarted `Coroutine` to jump to.
+		"""
 		Exception.__init__(self)
 		self.gen = gen
 
@@ -464,6 +478,40 @@ setattr(_COROUTINES, "__reload_update__", lambda oldobj: oldobj)
 class Coroutine(WaitCondition):
 	"""
 	A coroutine.
+
+	Any coroutine instance is, at any given time, in one of the following states:
+
+	STATE_STOPPED
+		Created and ready to run, but has not been started.
+
+	STATE_RUNNING
+		Currently executing code.
+
+	STATE_SUSPENDED
+		Waiting on a `WaitCondition`, which will be assigned to ``self.wait_condition``.
+
+	STATE_COMPLETED
+		Completed successfully. ``self.result`` will be a tuple ``(result, None)``.
+
+	STATE_FAILED
+		Failed with an exception. ``self.result`` will be a tuple ``(None, (type, value, traceback))``.
+
+	A coroutine is itself a `WaitCondition`, which other coroutines can ``yield`` to wait
+	for completion. Coroutine objects also implement the context manager protocol from PEP 342;
+	one can use the ``with`` statement as such::
+
+		with coro:
+			do_stuff()
+
+	This is equivalent to::
+
+		if coro.state == coro.STATE_STOPPED:
+			coro.start()
+
+		try:
+			do_stuff()
+		finally:
+			coro.kill()
 	"""
 
 	STATE_STOPPED, STATE_RUNNING, STATE_SUSPENDED, STATE_COMPLETED, STATE_FAILED = range(5)
@@ -472,8 +520,12 @@ class Coroutine(WaitCondition):
 
 	def __init__(self, generator, default_callback=None, autostart=False, is_watched=False):
 		"""
-		Create a coroutine instance. "generator" is the function or method that contains
-		the body of the coroutine code.
+		Constructor.
+
+		:Parameters:
+			- `generator`: The function or method containing the body of the coroutine's code.
+			- `default_callback`: An initial completion callback; see `add_completion_callback`.
+			- `autostart`: Set to ``True`` to `start` the coroutine immediately.
 		"""
 
 		# Don't call WaitCondition.__init__; it raises NotImplementedError to prevent
@@ -544,6 +596,8 @@ class Coroutine(WaitCondition):
 	def resume(self, next_value, next_exception=None):
 		"""
 		Run the coroutine as long as possible.
+
+		This may only be called when the coroutine is in ``STATE_SUSPENDED``.
 		"""
 
 		assert self.state == self.STATE_SUSPENDED
@@ -633,12 +687,10 @@ class Coroutine(WaitCondition):
 		self.state = self.STATE_SUSPENDED
 		self.resume(None)
 
-	def bind(self, bound_coro):
-		"""
-		Bind to a given coroutine; see `WaitCondition.bind()`.
+	def bind(self, coro):
+		"""Bind to another coroutine (`WaitCondition`).
 
-		This adds bound_coro.resume as a completion callback, such that it will resume
-		once we terminate (if that has not happened already).
+		This should not be called from outside the Coroutine class.
 		"""
 
 		self.is_watched = True
@@ -646,15 +698,18 @@ class Coroutine(WaitCondition):
 			self.start()
 
 		if self.state in (self.STATE_COMPLETED, self.STATE_FAILED):
-			# If we've alread waiting_coro has already returned, just return its state now.
+			# If we've already returned, just return our state now.
 			return self.result
 		else:
-			# Hasn't started yet se:
-			self.add_completion_callback(bound_coro.resume)
+			# We haven't finished yet, so resume the other coroutine when we do.
+			self.add_completion_callback(coro.resume)
 			return None
 		
 	def unbind(self, coro):
-		"""Unbind from a given coroutine; see `WaitCondition.unbind()`."""
+		"""Unbind from another coroutine (`WaitCondition`).
+
+		This should not be called from outside the Coroutine class.
+		"""
 		self.remove_completion_callback(coro.resume)
 
 	def add_completion_callback(self, callback):
@@ -671,7 +726,7 @@ class Coroutine(WaitCondition):
 		as above, to modify the result of the coroutine.
 
 		Once a completion callback has been set, it may be removed with
-		remove_completion_callback.
+		`remove_completion_callback`.
 		"""
 
 		assert self.state not in (self.STATE_COMPLETED, self.STATE_FAILED)
@@ -679,20 +734,18 @@ class Coroutine(WaitCondition):
 
 	def remove_completion_callback(self, callback):
 		"""
-		Remove a completion callback after it has been set with set_completion_callback().
+		Remove a completion callback that was set with `add_completion_callback`.
 		"""
 
 		self.completion_callbacks.remove(callback)
 
 	def kill(self):
 		"""
-		Forcefully kill a coroutine.
+		Forcefully stop running this coroutine.
 
-		If the coroutine is not in STATE_RUNNING or STATE_SUSPENDED, this does nothing.
+		If the coroutine is not in `STATE_RUNNING` or `STATE_SUSPENDED`, this does nothing.
 		A suspended coroutine will have its current wait condition unbound; its completion
-		callback will then be called with a CoroutineKilledException. If the coroutine is
-		currently running (i.e. it, or something it calls, kills itself) then kill() will
-		set it to STATE_CONDEMNED, and it will terminate after it next yields.
+		callback will then be called with a CoroutineKilledException.
 		"""
 
 		if self.state == self.STATE_SUSPENDED:
@@ -709,7 +762,8 @@ class Coroutine(WaitCondition):
 			self._terminate(None, sys.exc_info())
 
 		elif self.state == self.STATE_RUNNING:
-			assert False
+			# XXX kill self while running?
+			raise NotImplementedError
 
 	def __enter__(self):
 		"""Context manager entrance function: start this coroutine."""
@@ -776,7 +830,6 @@ class _chiral_introspection(object):
 
 __all__ = [
 	"as_coro",
-	"as_coro_waitcondition",
 	"returns_waitcondition",
 	"swallow_kill",
 	"CoroutineKilledException",

@@ -31,6 +31,7 @@ class EchoServer(tcp.TCPServer):
 @decorator
 def reactor_test(coro, self):
 	cr = coro(self)
+	cr.start()
 	reactor.run()
 	self.assertEqual(cr.state, cr.STATE_COMPLETED)
 
@@ -69,7 +70,7 @@ if __name__ == "__main__":
 
 	suite = unittest.TestLoader().loadTestsFromTestCase(TCPTests)
 
-	while True:
+	for i in xrange(1000):
 		gc.collect()
 		res = unittest.TextTestRunner(verbosity=2).run(suite)
 		if not res.wasSuccessful(): break

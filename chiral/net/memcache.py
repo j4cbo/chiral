@@ -45,7 +45,7 @@ Detailed Documentation
 More detailed documentation is available in the L{Client} class.
 """
 
-from chiral.core.coroutine import Coroutine, returns_waitcondition, as_coro_waitcondition
+from chiral.core.coroutine import Coroutine, returns_waitcondition, as_coro
 from chiral.net import tcp, reactor
 
 from decorator import decorator
@@ -161,7 +161,7 @@ class Client(local):
 			for _index in range(weight):
 				self.buckets.append(server)
 
-	@as_coro_waitcondition
+	@as_coro
 	def get_stats(self):
 		"""
 		Get statistics from each of the servers.
@@ -196,7 +196,7 @@ class Client(local):
 		for server in self.servers:
 			server.dead_until = 0
 
-	@as_coro_waitcondition
+	@as_coro
 	def _get_server_for(self, key):
 		"""Given a key, return the _ServerConnection to which that key should be mapped."""
 
@@ -221,7 +221,7 @@ class Client(local):
 			server.close()
 
 
-	@as_coro_waitcondition
+	@as_coro
 	def get(self, key):
 		'''Retrieves a key from the memcache.
 
@@ -306,7 +306,7 @@ class Client(local):
 		"""
 		return self._set("set", key, val, expiry_time, min_compress_len)
 
-	@as_coro_waitcondition
+	@as_coro
 	def _set(self, cmd, key, val, expiry_time, min_compress_len = 0):
 		"""Helper function for add, set, replace"""
 		check_key(key)
@@ -333,7 +333,7 @@ class Client(local):
 
 		raise StopIteration(False)
 
-	@as_coro_waitcondition
+	@as_coro
 	def delete(self, key, dead_time=0):
 		"""
 		Deletes a key from the memcache.
@@ -404,7 +404,7 @@ class Client(local):
 		"""
 		return self._incrdecr("decr", key, delta)
 
-	@as_coro_waitcondition
+	@as_coro
 	def _incrdecr(self, cmd, key, delta):
 		"""Helper function for handling incr and decr."""
 		check_key(key)
@@ -421,7 +421,7 @@ class Client(local):
 		except tcp.ConnectionClosedException:
 			server.mark_dead()
 
-	@as_coro_waitcondition
+	@as_coro
 	def _map_keys_to_servers(self, key_iterable, key_prefix):
 		"""
 		For each key in data, determine which server that key should be mapped to.
@@ -780,7 +780,7 @@ class _ServerConnection(tcp.TCPConnection):
 
 		tcp.TCPConnection.__init__(self, self.addr)
 
-	@as_coro_waitcondition
+	@as_coro
 	def check(self):
 		"""
 		Attempt to establish or reistablish the connection.
@@ -804,7 +804,7 @@ class _ServerConnection(tcp.TCPConnection):
 		self.deaduntil = time.time() + self._DEAD_RETRY
 		self.close()
 
-	@as_coro_waitcondition
+	@as_coro
 	def get_stats(self):
 		"""
 		Get statistics from the server.
@@ -886,7 +886,7 @@ class _MemcachedTests(unittest.TestCase):
 		"""Set up the connection"""
 		self.conn = Client(["127.0.0.1:11211"], debug = 1)
 
-	@as_coro_waitcondition
+	@as_coro
 	def check_setget(self, key, value):
 		"""Check that getting, setting, and deleting an object work as expected."""
 

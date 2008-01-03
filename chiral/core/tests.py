@@ -98,6 +98,7 @@ class CoroutineTests(unittest.TestCase):
 		"""Check that the @coroutine.task decorator functions properly"""
 
 		coro = coroutine_with_decorator(42)
+		coro.start()
 		self.check_completed(coro, 42)
 
 	def test_wc_not_implemented(self):

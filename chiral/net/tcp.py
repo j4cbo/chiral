@@ -153,7 +153,7 @@ class TCPConnection(coroutine.Coroutine):
 
 
 
-	@coroutine.as_coro_waitcondition
+	@coroutine.as_coro
 	def read_exactly(self, length, read_increment = 32768):
 		"""
 		Read and return exactly length bytes.
@@ -197,7 +197,7 @@ class TCPConnection(coroutine.Coroutine):
 
 
 
-	@coroutine.as_coro_waitcondition
+	@coroutine.as_coro
 	def recv(self, buflen):
 		"""
 		Read data from the socket.
@@ -216,7 +216,7 @@ class TCPConnection(coroutine.Coroutine):
 			yield reactor.wait_for_readable(self.remote_sock)
 
 
-	@coroutine.as_coro_waitcondition
+	@coroutine.as_coro
 	def _sendall_coro(self, data):
 		"""Helper coroutine created by sendall if not all data could be sent."""
 		while data:
@@ -260,7 +260,7 @@ class TCPConnection(coroutine.Coroutine):
 		return self._sendall_coro(data)
 
 
-	@coroutine.as_coro_waitcondition
+	@coroutine.as_coro
 	def send(self, data):
 		"""
 		Send data, and return the number of bytes actually sent. Note that the
@@ -281,7 +281,7 @@ class TCPConnection(coroutine.Coroutine):
 			yield reactor.wait_for_writeable(self.remote_sock)
 
 
-	@coroutine.as_coro_waitcondition
+	@coroutine.as_coro
 	def sendfile(self, infile, offset, length):
 		"""
 		Send up to len bytes of data from infile, starting at offset.
@@ -318,7 +318,7 @@ class TCPConnection(coroutine.Coroutine):
 		raise StopIteration(res[1])
 
 
-	@coroutine.as_coro_waitcondition
+	@coroutine.as_coro
 	def connect(self):
 		"""
 		Connect or reconnect to the remote server.
