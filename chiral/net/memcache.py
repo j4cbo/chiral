@@ -6,9 +6,11 @@ Client module for memcached (memory cache daemon)
 Overview
 ========
 
-See U{the MemCached homepage<http://www.danga.com/memcached>} for more about memcached.
+See `the MemCached homepage`__ for more about memcached.
 
 This is the Chiral version of the memcached client, modified to make use of coroutines.
+
+__ http://www.danga.com/memcached
 
 Usage summary
 =============
@@ -42,7 +44,7 @@ The standard way to use memcache with a database is like this::
 Detailed Documentation
 ======================
 
-More detailed documentation is available in the L{Client} class.
+More detailed documentation is available in the `Client` class.
 """
 
 from chiral.core.coroutine import Coroutine, returns_waitcondition, as_coro
@@ -87,23 +89,17 @@ class Client(local):
 	"""
 	Object representing a pool of memcache servers.
 
-	See L{memcache} for an overview.
+	See `memcache` for an overview.
 
 	In all cases where a key is used, the key can be either:
 
-	1. A simple hashable type (string, integer, etc.).
-	2. A tuple of C{(hashvalue, key)}.  This is useful if you want to avoid
+	1.
+		A simple hashable type (string, integer, etc.).
+	2.
+		A tuple of ``(hashvalue, key)``.  This is useful if you want to avoid
 		making this module calculate a hash value.  You may prefer, for
 		example, to keep all of a given user's objects on the same memcache
 		server, so you could use the user's unique id as the hash value.
-
-	@group Setup: __init__, set_servers, forget_dead_hosts, disconnect_all
-	@group Insertion: set, add, replace, set_multi
-	@group Retrieval: get, get_multi
-	@group Integers: incr, decr
-	@group Removal: delete, delete_multi
-	@sort: __init__, set_servers, forget_dead_hosts, disconnect_all, \
-		set, set_multi, add, replace, get, get_multi, incr, decr, delete, delete_multi
 	"""
 
 	_FLAG_PICKLE = 1 << 0
@@ -117,9 +113,8 @@ class Client(local):
 		"""
 		Create a new Client object with the given list of servers.
 
-		@param servers: C{servers} is passed to L{set_servers}.
-		@param debug: whether to display error messages when a server is
-		unavailable.
+		:param servers: `servers` is passed to `set_servers`.
+		:param debug: whether to display error messages when a server is unavailable.
 		"""
 
 		local.__init__(self)
@@ -136,13 +131,12 @@ class Client(local):
 		"""
 		Set the pool of servers used by this client.
 
-		@param servers: an array of servers.
+		:param servers: an array of servers.
 
 		Servers can be passed in two forms:
 
-		1. Strings of the form C{"host:port"}, which implies a default weight of 1.
-		2. Tuples of the form C{("host:port", weight)}, where C{weight} is
-		an integer weight value.
+		1. Strings of the form ``"host:port"``, which implies a default weight of 1.
+		2. Tuples of the form ``("host:port", weight)``, where ``weight`` is an integer weight value.
 		"""
 
 		self.servers = []
@@ -166,10 +160,11 @@ class Client(local):
 		"""
 		Get statistics from each of the servers.
 
-		@return: A list of tuples ( server_identifier, stats_dictionary ).
-		The dictionary contains a number of name/value pairs specifying
-		the name of the status field and the string value associated with
-		it.  The values are not converted from strings.
+		:return:
+			A list of tuples ``(server_identifier, stats_dictionary)``.
+			The dictionary contains a number of name/value pairs specifying
+			the name of the status field and the string value associated with
+			it.  The values are not converted from strings.
 		"""
 
 		data = []
@@ -180,7 +175,7 @@ class Client(local):
 		raise StopIteration(data)
 
 	def flush_all(self):
-		"Expire all data currently in the memcache servers."
+		"""Expire all data currently in the memcache servers."""
 
 		for server in self.servers:
 			yield server.sendall("flush_all")
@@ -198,7 +193,7 @@ class Client(local):
 
 	@as_coro
 	def _get_server_for(self, key):
-		"""Given a key, return the _ServerConnection to which that key should be mapped."""
+		"""Given a key, return the `_ServerConnection` to which that key should be mapped."""
 
 		if type(key) == tuple:
 			serverhash, key = key
@@ -223,10 +218,10 @@ class Client(local):
 
 	@as_coro
 	def get(self, key):
-		'''Retrieves a key from the memcache.
+		"""Retrieves a key from the memcache.
 
-		@return: The value or None.
-		'''
+		:return: The value or None.
+		"""
 		check_key(key)
 		server, key = yield self._get_server_for(key)
 		if not server:
@@ -260,9 +255,9 @@ class Client(local):
 		"""
 		Add new key with value.
 
-		Like L{set}, but only stores in memcache if the key doesn't already exist.
+		Like `set`, but only stores in memcache if the key doesn't already exist.
 
-		@return: True on success.
+		:return: True on success.
 		"""
 		return self._set("add", key, val, expiry_time, min_compress_len)
 
@@ -271,10 +266,10 @@ class Client(local):
 		"""
 		Replace existing key with value.
 
-		Like L{set}, but only stores in memcache if the key already exists.
-		The opposite of L{add}.
+		Like `set`, but only stores in memcache if the key already exists.
+		The opposite of `add`.
 
-		@return: True on success.
+		:return: True on success.
 		"""
 		return self._set("replace", key, val, expiry_time, min_compress_len)
 
@@ -282,27 +277,29 @@ class Client(local):
 		"""
 		Unconditionally sets a key to a given value in the memcache.
 
-		The C{key} can optionally be an tuple, with the first element being the
+		The ``key`` can optionally be an tuple, with the first element being the
 		hash value, if you want to avoid making this module calculate a hash value.
 		You may prefer, for example, to keep all of a given user's objects on the
 		same memcache server, so you could use the user's unique id as the hash
 		value.
 
-		@return: Nonzero on success.
-		@rtype: int
+		:return: Nonzero on success.
+		:rtype: int
 
-		@param expiry_time: Tells memcached the time which this value should expire, either
-		as a delta number of seconds, or an absolute unix time-since-the-epoch
-		value. See the memcached protocol docs section "Storage Commands"
-		for more info on <exptime>. We default to 0 == cache forever.
+		:param expiry_time:
+			Tells memcached the time which this value should expire, either
+			as a delta number of seconds, or an absolute unix time-since-the-epoch
+			value. See the memcached protocol docs section "Storage Commands"
+			for more info on <exptime>. We default to 0 == cache forever.
 
-		@param min_compress_len: The threshold length to kick in auto-compression
-		of the value using the zlib.compress() routine. If the value being cached is
-		a string, then the length of the string is measured, else if the value is an
-		object, then the length of the pickle result is measured. If the resulting
-		attempt at compression yields a larger string than the input, then it is
-		discarded. For backwards compatability, this parameter defaults to 0,
-		indicating don't ever try to compress.
+		:param min_compress_len:
+			The threshold length to kick in auto-compression of the value using
+			the zlib.compress() routine. If the value being cached is a string, then
+			the length of the string is measured, else if the value is an object, then
+			the length of the pickle result is measured. If the resulting attempt at
+			compression yields a larger string than the input, then it is discarded.
+			For backwards compatability, this parameter defaults to 0, indicating don't
+			ever try to compress.
 		"""
 		return self._set("set", key, val, expiry_time, min_compress_len)
 
@@ -338,9 +335,11 @@ class Client(local):
 		"""
 		Deletes a key from the memcache.
 
-		@return: Nonzero on success.
-		@param dead_time: number of seconds any subsequent set / update commands should fail. Defaults to 0 for no delay.
-		@rtype: bool
+		:return: Nonzero on success.
+		:rtype: bool
+		:param dead_time:
+			number of seconds any subsequent set / update commands should fail.
+			Defaults to 0 for no delay.
 		"""
 
 		check_key(key)
@@ -368,11 +367,11 @@ class Client(local):
 	@returns_waitcondition
 	def incr(self, key, delta=1):
 		"""
-		Sends a command to the server to atomically increment the value for C{key} by
-		C{delta}, or by 1 if C{delta} is unspecified.  Returns None if C{key} doesn't
+		Sends a command to the server to atomically increment the value for ``key`` by
+		``delta``, or by 1 if ``delta`` is unspecified.  Returns None if ``key`` doesn't
 		exist on server, otherwise it returns the new value after incrementing.
 
-		Note that the value for C{key} must already exist in the memcache, and it
+		Note that the value for ``key`` must already exist in the memcache, and it
 		must be the string representation of an integer.
 
 		>>> mc.set("counter", "20")  # returns True, indicating success
@@ -383,24 +382,24 @@ class Client(local):
 		22
 
 		Overflow on server is not checked.  Be aware of values approaching
-		2**32.  See L{decr}.
+		2**32.  See ``decr``.
 
-		@param delta: Integer amount to increment by (should be zero or greater).
-		@return: New value after incrementing.
-		@rtype: int
+		:param delta: Integer amount to increment by (should be zero or greater).
+		:return: New value after incrementing.
+		:rtype: int
 		"""
 		return self._incrdecr("incr", key, delta)
 
 	@returns_waitcondition
 	def decr(self, key, delta=1):
 		"""
-		Like L{incr}, but decrements.  Unlike L{incr}, underflow is checked and
+		Like `incr`, but decrements.  Unlike `incr`, underflow is checked and
 		new values are capped at 0.  If server value is 1, a decrement of 2
 		returns 0, not -1.
 
-		@param delta: Integer amount to decrement by (should be zero or greater).
-		@return: New value after decrementing.
-		@rtype: int
+		:param delta: Integer amount to decrement by (should be zero or greater).
+		:return: New value after decrementing.
+		:rtype: int
 		"""
 		return self._incrdecr("decr", key, delta)
 
@@ -426,7 +425,7 @@ class Client(local):
 		"""
 		For each key in data, determine which server that key should be mapped to.
 
-		Returns a dict. Keys are _ServerConnection instances; for each server, the value is a
+		Returns a dict. Keys are `_ServerConnection` instances; for each server, the value is a
 		list of (prefixed_key, original_key) tuples for all values which belong on that server.
 		"""
 
@@ -478,30 +477,37 @@ class Client(local):
 		>>> mc.set_multi({'k1' : 1, 'k2' : 2}, key_prefix='pfx_') == []
 		True
 
-		This looks up keys 'pfx_k1', 'pfx_k2', ... . Returned dict will just have unprefixed keys 'k1', 'k2'.
+		This looks up keys 'pfx_k1', 'pfx_k2', ... . Returned dict will just have
+		unprefixed keys 'k1', 'k2'.
+
 		>>> mc.get_multi(['k1', 'k2', 'nonexist'], key_prefix='pfx_') == {'k1' : 1, 'k2' : 2}
 		True
 
-		get_multi (and `set_multi`) can take str()-ables like ints / longs as keys too. Such as your db pri key fields.
-		They're passed through str() before being sent to memcache, with or without the use of a key_prefix.
-		In this mode, the key_prefix could be a table name, and the key itself a db primary key number.
+		get_multi (and `set_multi`) can take str()-ables like ints / longs as keys too.
+		Such as your db pri key fields.  They're passed through str() before being sent
+		to memcache, with or without the use of a key_prefix. In this mode, the key_prefix
+		could be a table name, and the key itself a db primary key number.
 
-		>>> mc.set_multi({42: 'douglass adams', 46 : 'and 2 just ahead of me'}, key_prefix='numkeys_') == []
+		>>> mc.set_multi({42: 'douglas adams', 46 : 'and 2 just ahead of me'}, key_prefix='numkeys_') == []
 		1
-		>>> mc.get_multi([46, 42], key_prefix='numkeys_') == {42: 'douglass adams', 46 : 'and 2 just ahead of me'}
+		>>> mc.get_multi([46, 42], key_prefix='numkeys_') == {42: 'douglas adams', 46 : 'and 2 just ahead of me'}
 		1
 
-		This method is recommended over regular L{get} as it lowers the number of
+		This method is recommended over regular `get` as it lowers the number of
 		total packets flying around your network, reducing total latency, since
-		your app doesn't have to wait for each round-trip of L{get} before sending
+		your app doesn't have to wait for each round-trip of `get` before sending
 		the next one.
 
-		See also L{set_multi}.
+		See also `set_multi`.
 
-		@param keys: An array of keys.
-		@param key_prefix: A string to prefix each key when we communicate with memcache.
-			Facilitates pseudo-namespaces within memcache. Returned dictionary keys will not have this prefix.
-		@return:  A dictionary of key/value pairs that were available. If key_prefix was provided, the keys in the retured dictionary will not have it present.
+		:param keys: An array of keys.
+		:param key_prefix:	
+			A string to prefix each key when we communicate with memcache. Facilitates
+			pseudo-namespaces within memcache. Returned dictionary keys will not have
+			this prefix.
+		:return:
+			A dictionary of key/value pairs that were available. If key_prefix was
+			provided, the keys in the retured dictionary will not have it present.
 
 		"""
 
@@ -553,37 +559,44 @@ class Client(local):
 		>>> mc.get_multi(['key1', 'key2']) == {'key1' : 'val1', 'key2' : 'val2'}
 		True
 
-		This method is recommended over regular L{set} as it lowers the number of
+		This method is recommended over regular `set` as it lowers the number of
 		total packets flying around your network, reducing total latency, since
-		your app doesn't have to wait for each round-trip of L{set} before sending
+		your app doesn't have to wait for each round-trip of `set` before sending
 		the next one.
 
-		@param mapping: A dict of key/value pairs to set.
-		@param time: Tells memcached the time when this value should expire, either
-		as a delta number of seconds, or an absolute unix time-since-the-epoch
-		value. See the memcached protocol docs section "Storage Commands"
-		for more info on <exptime>. We default to 0 == cache forever.
-		@param key_prefix:  Optional string to prepend to each key when sending to
-		memcache. Allows you to efficiently stuff these keys into a pseudo-namespace in memcache:
+		:param mapping: A dict of key/value pairs to set.
+		:param time:
+			Tells memcached the time when this value should expire, either
+			as a delta number of seconds, or an absolute unix time-since-the-epoch
+			value. See the memcached protocol docs section "Storage Commands"
+			for more info on <exptime>. We default to 0 == cache forever.
+		:param key_prefix:
+			Optional string to prepend to each key when sending to
+			memcache. Allows you to efficiently stuff these keys into a
+			pseudo-namespace in memcache:
 
-			>>> notset_keys = mc.set_multi({'key1' : 'val1', 'key2' : 'val2'}, key_prefix='subspace_')
+			>>> notset_keys = mc.set_multi({'key1' : 'val1', 'key2' : 'val2'}, key_prefix='s_')
 			>>> len(notset_keys) == 0
 			True
-			>>> mc.get_multi(['subspace_key1', 'subspace_key2']) == {'subspace_key1' : 'val1', 'subspace_key2' : 'val2'}
+			>>> mc.get_multi(['s_key1', 's_key2']) == {'s_key1' : 'val1', 's_key2' : 'val2'}
 			True
 
-		Causes key 'subspace_key1' and 'subspace_key2' to be set. Useful in conjunction with a higher-level layer which applies namespaces to data in memcache.
-		In this case, the return result would be the list of notset original keys, prefix not applied.
+			Causes key 's_key1' and 's_key2' to be set. Useful in
+			conjunction with a higher-level layer which applies namespaces to data in
+			memcache. In this case, the return result would be the list of notset
+			original keys, prefix not applied.
 
-		@param min_compress_len: The threshold length to kick in auto-compression
-		of the value using the zlib.compress() routine. If the value being cached is
-		a string, then the length of the string is measured, else if the value is an
-		object, then the length of the pickle result is measured. If the resulting
-		attempt at compression yeilds a larger string than the input, then it is
-		discarded. For backwards compatability, this parameter defaults to 0,
-		indicating don't ever try to compress.
-		@return: List of keys which failed to be stored [ memcache out of memory, etc. ].
-		@rtype: list
+		:param min_compress_len:
+			The threshold length to kick in auto-compression
+			of the value using the zlib.compress() routine. If the value being cached is
+			a string, then the length of the string is measured, else if the value is an
+			object, then the length of the pickle result is measured. If the resulting
+			attempt at compression yeilds a larger string than the input, then it is
+			discarded. For backwards compatability, this parameter defaults to 0,
+			indicating don't ever try to compress.
+
+		:return: List of keys which failed to be stored [ memcache out of memory, etc. ].
+		:rtype: list
 		"""
 
 		server_keys, deprefix = yield self._map_keys_to_servers(mapping.iterkeys(), key_prefix)
@@ -644,17 +657,20 @@ class Client(local):
 		>>> mc.get_multi(['key1', 'key2']) == {}
 		True
 
-		This method is recommended over iterated regular L{delete}s as it reduces
+		This method is recommended over iterated regular `delete`s as it reduces
 		total latency, since your app does not have to wait for each round-trip of
-		L{delete} before sending the next one.
+		`delete` before sending the next one.
 
-		@param keys: An iterable of keys to clear
-		@param dead_time: number of seconds any subsequent set / update commands should fail. Defaults to 0 for no delay.
-		@param key_prefix:  Optional string to prepend to each key when sending to memcache.
-		See docs for L{get_multi} and L{set_multi}.
+		:param keys: An iterable of keys to clear
+		:param dead_time:
+			number of seconds any subsequent set / update commands should fail.
+			Defaults to 0 for no delay.
+		:param key_prefix: 
+			Optional string to prepend to each key when sending to memcache.
+			See docs for `get_multi` and `set_multi`.
 
-		@return: True if no failure in communication with any memcacheds.
-		@rtype: bool
+		:return: True if no failure in communication with any memcacheds.
+		:rtype: bool
 		"""
 
 		server_keys, _deprefix = yield self._map_keys_to_servers(keys, key_prefix)
@@ -809,10 +825,11 @@ class _ServerConnection(tcp.TCPConnection):
 		"""
 		Get statistics from the server.
 
-		@return: A tuple (server_identifier, stats_dictionary).
-		The dictionary contains a number of name/value pairs specifying
-		the name of the status field and the string value associated with
-		it.  The values are not converted from strings.
+		:return:
+			A tuple (server_identifier, stats_dictionary).
+			The dictionary contains a number of name/value pairs specifying
+			the name of the status field and the string value associated with
+			it. The values are not converted from strings.
 		"""
 
 		server_data = {}

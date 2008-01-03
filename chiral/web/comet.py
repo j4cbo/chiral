@@ -34,19 +34,22 @@ class CometPage(coroutine.Coroutine):
 			def __init__(self, environ, start_resp):
 				CometPage.__init__(self, environ, start_resp, method=self.METHOD_JS)
 
-	@cvar METHOD_CHUNKED: Send data in chunks delimited by self.delimiter
-	@cvar METHOD_JS: Send data (which should be serialized JSON) as calls to self.jsmethod
-	@cvar METHOD_MXMR: Send data as a multipart/x-mixed-replace document
+	:cvar METHOD_CHUNKED: Send data in chunks delimited by self.delimiter
+	:cvar METHOD_JS: Send data (which should be serialized JSON) as calls to self.jsmethod
+	:cvar METHOD_MXMR: Send data as a multipart/x-mixed-replace document
+	:cvar METHOD_AUTO:
+		Check the incoming URL for a _chiral_comet_method GET variable,
+		and choose a method accordingly. Defaults to METHOD_CHUNKED.
 
-	@cvar default_method: The method to use if none is specified in the constructor.
+	:cvar default_method: The method to use if none is specified in the constructor.
 
 	"""
 
-	METHOD_CHUNKED, METHOD_JS, METHOD_MXMR = xrange(3)
+	METHOD_CHUNKED, METHOD_JS, METHOD_MXMR, METHOD_AUTO = xrange(4)
 
 	def __init__(
 		self, environ, start_response,
-		method=METHOD_MXMR,
+		method=METHOD_AUTO,
 		delimiter="\r\n\r\n---\r\n",
 		jsmethod="parent.chiral._comet_handler",
 		content_type="text/plain"
@@ -54,10 +57,10 @@ class CometPage(coroutine.Coroutine):
 		"""
 		Constructor.
 
-		@param environ: WSGI "environ" parameter
-		@type environ: C{dict}
-		@param start_response: WSGI "start_response" parameter
-		@type start_response: C{callable}
+		:param environ: WSGI "environ" parameter
+		:type environ: ``dict``
+		:param start_response: WSGI "start_response" parameter
+		:type start_response: ``callable``
 		"""
 
 		self.jsmethod = jsmethod
@@ -161,6 +164,19 @@ class CometClock(object):
 		else:
 			start_response('404 Not Found', [('Content-Type', 'text/html')])
 			return [ "404 Not Found" ]
+
+
+class TimestampPage(CometPage):
+	"""
+	CometPage returning a text timestamp every second.
+	"""
+	def run(self):
+		curtime = time.time()
+		while True:
+			yield self.send_chunk(str(curtime))
+			curtime += 1
+			yield reactor.schedule(callbacktime = curtime)
+
 
 class CometLibServer(fileapp.FileApp):
 	"""File server that serves cometlib.js."""

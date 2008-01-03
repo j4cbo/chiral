@@ -42,9 +42,9 @@ class ThreadPoolWatcher(tcp.TCPConnection):
 	def restart(self):
 		"""Restart the ThreadPoolWatcher.
 
-		After an operation is added to the thread pool's input queue, the adder should
-		see if watcher.restart is null; if not, it should call restart(), which will do
-		whatever is necessary to ensure that the watcher is functional.
+		After an operation is added to the thread pool's input queue, the adder (generally
+		`run_in_thread`) should see if watcher.restart is null; if not, it should call
+		restart(), which will ensure that the watcher is functional.
 		"""
 
 		# At first, restart() does the actual TCP socket setup, etc. Later calls to restart()
@@ -57,6 +57,7 @@ class ThreadPoolWatcher(tcp.TCPConnection):
 		self.start()
 
 	def connection_handler(self):
+		"""Main event processing loop."""
 		while True:
 			incoming = yield self.recv(128)
 			for _index in incoming:
@@ -182,7 +183,7 @@ class WorkerThread(threading.Thread):
 
 @returns_waitcondition
 def run_in_thread(operation, *args, **kwargs):
-	"""Run operation(*args, **kwargs) in a thread, returning the result."""
+	"""Run operation in a thread, returning the result."""
 
 	pool = ThreadPoolContainer.pool
 

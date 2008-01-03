@@ -172,7 +172,7 @@ def _update_class(oldclass, newclass):
 
 
 def _update_classmethod(oldcm, newcm):
-	"""Update a classmethod update."""
+	"""Update a classmethod."""
 	# While we can't modify the classmethod object itself (it has no
 	# mutable attributes), we *can* extract the underlying function
 	# (by calling __get__(), which returns a method object) and update
@@ -183,7 +183,7 @@ def _update_classmethod(oldcm, newcm):
 
 
 def _update_staticmethod(oldsm, newsm):
-	"""Update a staticmethod update."""
+	"""Update a staticmethod."""
 	# While we can't modify the staticmethod object itself (it has no
 	# mutable attributes), we *can* extract the underlying function
 	# (by calling __get__(), which returns it) and update it in-place.
