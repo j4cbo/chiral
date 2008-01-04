@@ -436,6 +436,11 @@ class TCPServer(coroutine.Coroutine):
 	connection_class = TCPConnection
 
 	def __init__(self, bind_addr = ('', 80)):
+		"""
+		Constructor.
+
+		:param bind_addr: The address ``(host, port)`` to bind to, as in ``socket.bind``.
+		"""
 		self.bind_addr = bind_addr
 		self.connections = weakref.WeakValueDictionary()
 

@@ -446,6 +446,13 @@ class HTTPConnection(tcp.TCPConnection):
 class HTTPServer(tcp.TCPServer):
 	"""An HTTP server, based on chiral.net.tcp.TCPServer."""
 	connection_class = HTTPConnection
-	def __init__(self, bind_addr = ('', 80), application=None):
+	def __init__(self, bind_addr, application):
+		"""
+		Constructor.
+
+		:param bind_addr: The address ``(host, port)`` to bind to, as in ``socket.bind``.
+		:param application: A WSGI-compliant application callable.
+		"""
+
 		self.application = application
 		tcp.TCPServer.__init__(self, bind_addr)
