@@ -1,5 +1,33 @@
 """
-Chiral HTTP server supporting WSGI
+WSGI-based HTTP daemon.
+
+Chiral's HTTP server is a fully-compliant implementation of WSGI 1.0 (see `PEP 333`_), plus some
+extensions for Coroutine-based pages. The only class users need to access is `HTTPServer`,
+which is used as such::
+
+	HTTPServer(
+		bind_addr = ('', 8080),
+		application = wsgi_app
+	).start()
+
+	reactor.run()
+
+The ``application`` parameter is a WSGI-compliant callable. Request dispatching, file serving,
+and so on are all outside the scope of ``chiral.web.httpd``; it is intended that some combination of
+the following will be used:
+
+- Standalone WSGI middleware such as Paste_
+- Chiral-optimized utility classes from `chiral.web.servers`
+- Chiral-specific framework functions for coroutine-based pages in `chiral.web.framework`
+- Comet support from `chiral.web.comet`
+
+As suggested in `PEP 333`_, the server implements the optional ``wsgi.file_wrapper``
+tool via the `WSGIFileWrapper` class. Note that to remain compliant with the WSGI spec, this
+class should only ever be accessed via ``wsgi.file_wrapper``; application code should have no
+need to import ``chiral.web.httpd`` at all.
+
+.. _Paste: http://pythonpaste.org/
+.. _PEP 333: http://www.python.org/dev/peps/pep-0333/
 """
 
 # Chiral, copyright (c) 2007 Jacob Potter
@@ -21,27 +49,56 @@ from datetime import datetime
 _CHIRAL_RELOADABLE = True
 
 class HTTPResponse(object):
-	"""Response to an HTTP request."""
+	"""Response to an HTTP request.
 
-	def __init__(self, conn, status = "500 Internal Server Error", headers = None, content=None):
+	An ``HTTPResponse`` is created by the `HTTPServer` to store state for each request.
+	"""
+
+	def __init__(self, conn, environ = None, status = "500 Internal Server Error", headers = None):
+		"""Constructor."""
 		self.conn = conn
 		self.headers = headers or {}
-		self.content = content
+		self.content = None
 		self.status = status
 
-		self.should_keep_alive = False
+		self.write_data_buffer = StringIO()
 
-	def default_error(self, status, extra_content=''):
-		"""Sets the response to show a default error message."""
+		if environ:
+			# Determine if we may do a keep-alive.
+			connection_header = environ.get("HTTP_CONNECTION", "").lower()
+			protocol = environ["SERVER_PROTOCOL"]
+			self.should_keep_alive = (
+				(protocol == "HTTP/1.1" and "close" not in connection_header) or
+				(protocol == "HTTP/1.0" and connection_header == "keep-alive")
+			)
+		else:
+			self.should_keep_alive = False
+
+
+	def start_response(self, status, response_headers, exc_info=None):
+		"""
+		start_response() callback for WSGI applications.
+		"""
+
+		# start_response may not be called after headers have already been set.
+		if exc_info and self.headers:
+			raise exc_info[0], exc_info[1], exc_info[2]
 
 		self.status = status
-		self.headers["Content-Type"] = "text/html"
+		self.headers.update(response_headers)
+
+		if exc_info:
+			self.status = "500 Internal Server Error"
+			exc_info = None
+
+		return self.write_data_buffer.write
 
 	def render_headers(self, no_content = False):
 		"""Return the response line and headers as a string."""
 
 		# If we don't have a Content-Length, don't do a keep-alive
-		if not no_content and "content-length" not in (key.lower() for key in self.headers.iterkeys()):
+		header_keys = (key.lower() for key in self.headers.iterkeys())
+		if not no_content and "content-length" not in header_keys:
 			self.should_keep_alive = False
 
 		self.headers.update({
@@ -56,20 +113,58 @@ class HTTPResponse(object):
 		)
 
 class WSGIFileWrapper(object):
+	"""WSGI file wrapper, per PEP 333."""
+
 	def __init__(self, filelike, blocksize = 4096):
+		"""Constructor.
+
+		:param filelike: A file-like object to read from.
+		:param blocksize: The suggested block size to use when reading from ``filelike``.
+		"""
+
 		self.filelike = filelike
 		self.blocksize = blocksize
 
 	def close(self):
+		"""Call ``self.filelike.close()``, if available."""
+
 		if hasattr(self.filelike, "close"):
 			self.filelike.close()
+
+	@coroutine.as_coro
+	def send_on_connection(self, connection, response):
+		"""
+		Send the file to the given `HTTPConnection`.
+	
+		Should only be called from within `HTTPConnection.connection_handler`.
+		"""
+
+		# Use TCP_CORK if available, to keep the file and headers together.
+		if hasattr(socket, "TCP_CORK"):
+			connection.remote_sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_CORK, 1)
+
+		yield connection.sendall(response.render_headers())
+
+		res = yield connection.sendfile(self.filelike, 0, self.blocksize)
+
+		if hasattr(socket, "TCP_CORK"):
+			connection.remote_sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_CORK, 0)
+
+		offset = res
+		while res:
+			res = yield connection.sendfile(self.filelike, offset, self.blocksize)
+			offset += res
+	
+		# Close the file
+		self.close()
+
 
 class HTTPConnection(tcp.TCPConnection):
 	"""An HTTP connection."""
 
 	MAX_REQUEST_LENGTH = 8192
 
-	def send_error(self, status, resp, extra_content = ""):
+	def send_error(self, status, resp = None, extra_content = ""):
 		"""Create and send an HTTPResponse for the given status code."""
 
 		if resp:
@@ -90,11 +185,29 @@ class HTTPConnection(tcp.TCPConnection):
 
 		return self.sendall(resp.render_headers() + content)
 
+
+	def connection_handler_completed(self, _value, exception):
+		"""
+		Completion callback for connection handler. 
+
+		This swallows all ConnectionClosedException and socket.error exceptions.
+		"""
+
+		if exception:
+			exc_type = exception[0]
+			if exc_type in (tcp.ConnectionClosedException, socket.error):
+				return (None, None)
+
+		if self.remote_sock is not None:
+			self.close()
+
+
 	def connection_handler(self):
 		"""The main request processing loop."""
 
 		while True:
-			# Read the first line
+
+			# Read the first line of the HTTP request.
 			try:
 				line = yield self.read_line()
 				# Ignore blank lines, as suggested by the RFC
@@ -105,18 +218,11 @@ class HTTPConnection(tcp.TCPConnection):
 				yield self.send_error("400 Bad Request")
 				self.close()
 				return
-			except (tcp.ConnectionClosedException, socket.error):
-				return
 
+			# Prepare WSGI environment.
 			waiting_coro = []
-
-			# Get ready for a WSGI response
-			response = HTTPResponse(self)
-
-			# Prepare WSGI environment
 			environ = {
 				'chiral.http.connection': self,
-				'chiral.http.response': response,
 				'wsgi.version': (1, 0),
 				'wsgi.url_scheme': 'http',
 				'wsgi.input': '',
@@ -145,14 +251,13 @@ class HTTPConnection(tcp.TCPConnection):
 			while True:
 				try:
 					line = yield self.read_line()
-					if not line:
-						break
 				except tcp.ConnectionOverflowException:
 					yield self.send_error("400 Bad Request")
 					self.close()
 					return
-				except (tcp.ConnectionClosedException, socket.error):
-					return
+
+				if not line:
+					break
 
 				# Allow for headers split over multiple lines.
 				if last_key and line[0] in (" ", "\t"):
@@ -171,7 +276,7 @@ class HTTPConnection(tcp.TCPConnection):
 
 				if key in environ:
 					# RFC2616 4.2: Multiple copies of a header should be
-					# treated # as though they were separated by commas.
+					# treated as though they were separated by commas.
 					environ[key] += "," + value.strip()
 				else:
 					environ[key] = value.strip()
@@ -211,45 +316,26 @@ class HTTPConnection(tcp.TCPConnection):
 				waiting_coro[:] = [ coro ]
 			environ['chiral.http.set_coro'] = set_coro
 
-
-			# Determine if we may do a keep-alive.
-			connection_header = environ.get("HTTP_CONNECTION", "").lower()
-			response.should_keep_alive = (
-				(protocol == "HTTP/1.1" and "close" not in connection_header) or
-				(protocol == "HTTP/1.0" and connection_header == "keep-alive")
-			)
-
-			write_data_buffer = StringIO()
-
-			def start_response(status, response_headers, exc_info=None):
-				"""start_response() callback for WSGI applications"""
-				# start_response may not be called after headers have already
-				# been set.
-				if exc_info and response.headers:
-					raise exc_info[0], exc_info[1], exc_info[2]
-
-				response.status = status
-				response.headers.update(response_headers)
-
-				if exc_info:
-					response.status = "500 Internal Server Error"
-					exc_info = None
-
-				return write_data_buffer.write
+			# Prepare the response object. 
+			response = HTTPResponse(self, environ)
 
 			# Invoke the application.
 			try:
-				result = self.server.application(environ, start_response)
+				result = self.server.application(environ, response.start_response)
 			except Exception:
-				exc_formatted = "<pre>%s</pre>" % html_quote(traceback.format_exc())
-				yield self.send_error("500 Internal Server Error", response, exc_formatted)
+				yield self.send_error(
+					"500 Internal Server Error",
+					response,
+					"<pre>%s</pre>" % html_quote(traceback.format_exc())
+				)
 
 				# Close if necessary
-				if not response.should_keep_alive:
+				if response.should_keep_alive:
+					continue
+				else:
 					self.close()
 					break
 
-				continue
 
 			# If the iterable has length 1, then we can determine the length
 			# of the whole result now.
@@ -259,38 +345,19 @@ class HTTPConnection(tcp.TCPConnection):
 			except TypeError:
 				pass
 
-			# Handle file wrapper
+			# Handle WSGIFileWrapper.
 			if isinstance(result, WSGIFileWrapper):
+				yield result.send_to_connection(self, response)
 
-				# Use TCP_CORK if available
-				if hasattr(socket, "TCP_CORK"):
-					self.remote_sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_CORK, 1)
-
-				yield self.sendall(response.render_headers())
-
-				res = yield self.sendfile(result.filelike, 0, result.blocksize)
-
-				if hasattr(socket, "TCP_CORK"):
-					self.remote_sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_CORK, 0)
-
-				offset = res
-				while res:
-					res = yield self.sendfile(result.filelike, offset, result.blocksize)
-					offset += res
-
-				# Close the file
-				result.close()
-
-				# Close if necessary
-				if not response.should_keep_alive:
+				# We're now done with this request.
+				if response.should_keep_alive:
+					continue
+				else:
 					self.close()
 					break
 
-				# And we're now done with this request.
-				continue
-
 			# Did they use write()?
-			write_data = write_data_buffer.getvalue()
+			write_data = response.write_data_buffer.getvalue()
 			if write_data:
 				headers_sent = True
 				yield self.sendall(response.render_headers() + write_data)

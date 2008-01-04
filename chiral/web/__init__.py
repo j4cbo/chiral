@@ -1,4 +1,4 @@
-"""Web server and tools"""
+"""Web server and tools."""
 
 # Chiral, copyright (c) 2007 Jacob Potter
 # This program is free software; you can redistribute it and/or modify
