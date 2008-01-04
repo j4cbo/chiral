@@ -1,5 +1,5 @@
 """
-epoll() wrapper using ctypes
+sendfile() wrapper using ctypes
 """
 
 # Chiral, copyright (c) 2007 Jacob Potter

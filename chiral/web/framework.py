@@ -30,6 +30,24 @@ for entry_point in pkg_resources.iter_entry_points('python.templating.engines'):
 
 
 def use_template(engine, template, **kwargs):
+	"""Filter the result from the decorated function through a template engine.
+
+	This uses the ``python.templating.engines`` entry point of ``pkg_resources`` to
+	automatically load installed templating engines, such as Kid (via TurboKid) and
+	Genshi. It should be applied around the `coroutine_page` decorator. A
+	``chiral_postprocessors`` attribute will be added to the wrapped function which will
+	filter its output through the given engine and template. Any ``kwargs`` are passed
+	to the engine's ``render`` method.
+
+	For example::
+
+		@coroutine_page()
+		@use_template("genshi", "chiral.web.templates.helloworld")
+		def asyncpagetest():
+			yield
+			raise StopIteration({ "foo": "Test Page" })
+	"""
+
 	if engine not in _ENGINES:
 		raise Exception("Engine '%s' is not available." % (engine, ))
 
@@ -49,8 +67,39 @@ def use_template(engine, template, **kwargs):
 	return decorate
 
 
-
 def coroutine_page(include_get_vars=True):
+	"""
+	Turn a coroutine function into a WSGI callable.
+
+	This is best illustrated by an example::
+
+		@coroutine_page()
+		def sample_page(name=None):
+			yield reactor.schedule(0.5)
+			template = "<html><body><h1>Hello, %s!</h1></body></h1>"
+			if name:
+				raise StopIteration(template % (cgi.escape(name), ))
+			else:
+				raise StopIteration(template % ("world", ))
+
+	The ``sample_page`` function is now a WSGI callable. When invoked,
+	``paste.request.parse_formvars`` is used to parse the GET request, and the
+	resultant dict is passed as kwargs to the original function. A coroutine
+	is instantiated around it, and returned to the `chiral.web.httpd` WSGI server
+	with its ``chiral.http.set_coro`` extension method.
+
+	If the ``sample_page`` coroutine causes an exception, it will be reraised,
+	causing the httpd to return a 500 Internal Server Error. Otherwise, the request
+	returns with a 200 OK. Optionally, a ``chiral.postprocessors`` attribute can be
+	set on the function with a list of callables, through which the return value will
+	be filtered before being sent to the browser. This mechanism is used by the `use_template` 
+	decorator.
+
+	:param include_get_vars:
+		Whether GET values should be included in the result; normally True.
+		See the documentation for ``paste.request.parse_formvars``. 
+	"""
+
 	def decorate(func):
 		def wrapped_function(environ, start_response):
 
@@ -77,7 +126,6 @@ def coroutine_page(include_get_vars=True):
 						retval = postproc(retval)
 
 				# Return it to the browser
-				conn = environ["chiral.http.connection"]
 				start_response("200 OK", {})
 
 				return [ retval ], None
