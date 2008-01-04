@@ -1,4 +1,8 @@
-"""Web servers for use with chiral.web.httpd"""
+"""
+Web servers for use with chiral.web.httpd
+
+Currently this implements `StaticFileServer`, a lightweight, high-performance file server.
+"""
 
 # Chiral, copyright (c) 2007 Jacob Potter
 # This program is free software; you can redistribute it and/or modify
@@ -16,11 +20,28 @@ import stat
 _CHIRAL_RELOADABLE = True
 
 class StaticFileServer(object):
+	"""
+	A static file server.
+
+	`StaticFileServer` provides simple file serving. It serves Last-Modified information,
+	respects ``If-Modified-Since``, and uses ``wsgi.file_wrapper`` for high performance; it is
+	intended that Chiral applications will not require a separate HTTP daemon to serve static
+	content.
+
+	A ``StaticFileServer`` instance is itself a WSGI callable, suitable for use directly with
+	HTTPServer or with other WSGI middleware.
+	"""
 
 	def __init__(self, path):
+		"""
+		Constructor.
+
+		:param path: The filesystem path to serve files out of.
+		"""
 		self.path = path
 
 	def __call__(self, environ, start_response):
+		"""WSGI callable."""
 
 		# Split the path into components, make sure there aren't any .., and rejoin
 		path_components = environ.get('PATH_INFO', '/').split("/")
