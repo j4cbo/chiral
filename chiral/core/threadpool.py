@@ -100,7 +100,7 @@ class ThreadPool(object):
 
 	A separate helper coroutine, the `ThreadPoolWatcher`, is responsible for returning results
 	to the main thread. The watcher is initialized from `run_in_thread` the first time the thread
-	pool is used. It creates a socketpair, and uses the `Reactor`'s socket event handling to wait on
+	pool is used. It creates a socketpair, and uses the reactor's socket event handling to wait on
 	the read end. Whenever a worker thread pushes a result onto the output queue, it writes a single
 	byte to the watcher's write socket. This will awaken the `ThreadPoolWatcher` coroutine in the
 	main thread, which ``recv``-s as many bytes as are available, and pops and dispatches that many

@@ -1,4 +1,37 @@
-"""Network event handling."""
+"""
+Network event handling.
+
+Chiral's main event loop is provided by the `Reactor` class. After program initialization,
+the Reactor is responsible for determining what internal (timer) and external (socket activity)
+events have occured. The event loop is as such:
+
+1. Determine when the next scheduled event should happen.
+2. Identify which sockets have coroutines waiting on them.
+3. Perform a system call that waits for socket activity or a timeout, whichever comes first.
+4. Dispatch all incoming socket events.
+5. Dispatch all timer events that are ready to run. 
+
+These steps are performed by `Reactor._run_once`. The main `Reactor.run` function simply calls
+``_run_once`` until it indicates that there are no more events to process.
+
+Step (3) is traditionally performed by the ``select()`` system call. However, ``select()`` requires
+that the set of "interesting" sockets be passed in to each call, and so scales O(n) as the number of
+sockets increases. Due to its internal bitfield data structure, it is also generally limited to 1024
+simultaneous file descriptors. As such, various platform-specific calls like ``epoll()`` (Linux 2.6+)
+and ``kqueue`` (FreeBSD 4.1+, Mac OS X 10.3+) have been introduced. These have the key advantage that
+step (2) is performed implicitly, when it is determined that the socket is "interesting", and not at
+each event loop. They therefore scale O(1) with respect to the number of open, idle sockets.
+
+Python does not include ``epoll()`` or ``kqueue()`` in its standard library, so ctypes-based bindings
+are provided in `chiral.os`. When `chiral.net.netcore` is loaded, it automatically checks for the
+availability of the platform-specific Reactor classes, and falls back to `SelectReactor` if they are not
+available.
+
+Chiral automatically instantiates a `Reactor` instance and makes it available as ``chiral.net.reactor``.
+Users should not create new Reactors themselves.
+
+See the documentation for the `Reactor` class for information on its specific methods.
+"""
 
 # Chiral, copyright (c) 2007 Jacob Potter
 # This program is free software; you can redistribute it and/or modify
@@ -29,11 +62,15 @@ class Reactor(object):
 		self._close_list = weakref.WeakValueDictionary()
 
 	def close_on_exit(self, sock):
-		"""Add sock to a list of sockets to be closed when the reactor terminates."""
+		"""Add `sock` to a list of sockets to be closed when the reactor terminates."""
 		self._close_list[id(sock)] = sock
 
 	def _handle_scheduled_events(self):
-		"""Handle any internally scheduled events."""
+		"""
+		Handle any internally scheduled events.
+
+		This should only be called by `Reactor._run_once`.
+		"""
 
 		while len(self._events) > 0:
 			next_event_time, next_event_cb = self._events[0][:2]
@@ -48,7 +85,7 @@ class Reactor(object):
 		"""
 		Run one iteration of the main event handling loop.
 
-		This should be overridden in a derived class.
+		This should only be called by `Reactor.run`.
 		"""
 		raise NotImplementedError
 
@@ -73,12 +110,17 @@ class Reactor(object):
 		"""
 		Return a WaitCondition that will fire at some point in the future.
 
-		The "time" parameter, if given, should be a datetime.datetime object or UNIX
-		timestamp; "delay" may be either a number of seconds or a datetime.timedelta.
-		time in seconds or a datetime.timedelta.
+		If both ``time`` and ``delay`` are None, the WaitCondition will fire as soon as
+		possible, during the next reactor loop. Since the reactor handles socket events
+		before scheduled calls, one can yield control to the Reactor to handle incoming
+		events (i.e. during a potentially CPU-intensive operation) with::
 
-		If both time and delay are None, the WaitCondition will fire as soon as
-		possible, during the next reactor loop.
+			yield reactor.schedule()
+
+		:param callbacktime: An absolute time or UNIX timestamp.
+		:type callbacktime: datetime.datetime, int, float
+		:param delay: A timedelta object or relative number of seconds.
+		:type delay: datetime.timedelta, int, float
 		"""
 
 		now = time.time()
@@ -114,6 +156,25 @@ class Reactor(object):
 		heapq.heappush(self._events, (callbacktime, callback))
 
 		return callback
+
+	def wait_for_readable(self, sock):
+		"""Return a WaitCondition for readability on a socket.
+
+		When the resultant WaitCondition is yielded, ``sock`` will be added to the list of
+		sockets of interest for the next event loop. If `WaitCondition.unbind` is called
+		(due to the yielding coroutine being killed, for example), the socket will be automatically
+		removed from the list. 
+
+		"""
+		raise NotImplementedError
+
+	def wait_for_writeable(self, sock):
+		"""
+		Return a WaitCondition for writeability on a socket.
+
+		This behaves analogously to `wait_for_readable`.
+		"""
+		raise NotImplementedError
 
 	def time_to_next_event(self):
 		"""Return the time, in seconds, until the next scheduled event."""
@@ -167,11 +228,11 @@ class SelectReactor(Reactor):
 
 
 	def wait_for_readable(self, sock):
-		"""Return a WaitCondition for readability on sock."""
+		"""Return a WaitCondition for readability on ``sock``."""
 		return self.WaitForEvent(sock, self, self._read_sockets)
 
 	def wait_for_writeable(self, sock):
-		"""Return a WaitCondition for writeability on sock."""
+		"""Return a WaitCondition for writeability on ``sock``."""
 		return self.WaitForEvent(sock, self, self._write_sockets)
 
 	def _run_once(self):
@@ -280,11 +341,11 @@ class EpollReactor(Reactor):
 			return "<EpollReactor.WaitForEvent: fd %r>" % (self.sock.fileno(), )
 
 	def wait_for_readable(self, sock):
-		"""Return a WaitCondition for readability on sock."""
+		"""Return a WaitCondition for readability on ``sock``."""
 		return self.WaitForEvent(sock, self, epoll.EPOLLIN)
 
 	def wait_for_writeable(self, sock):
-		"""Return a WaitCondition for writeability on sock."""
+		"""Return a WaitCondition for writeability on ``sock``."""
 		return self.WaitForEvent(sock, self, epoll.EPOLLOUT)
 
 	def _run_once(self):
@@ -391,11 +452,11 @@ class KqueueReactor(Reactor):
 			return "<KqueueReactor.WaitForEvent: fd %r>" % (self.sock.fileno(), )
 
 	def wait_for_readable(self, sock):
-		"""Return a WaitCondition for readability on sock."""
+		"""Return a WaitCondition for readability on ``sock``."""
 		return self.WaitForEvent(sock, self, kqueue.EVFILT_READ)
 
 	def wait_for_writeable(self, sock):
-		"""Return a WaitCondition for writeability on sock."""
+		"""Return a WaitCondition for writeability on ``sock``."""
 		return self.WaitForEvent(sock, self, kqueue.EVFILT_WRITE)
 
 	def _run_once(self):

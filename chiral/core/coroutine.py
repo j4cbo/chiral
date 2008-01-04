@@ -14,7 +14,7 @@ invoking the function, then passed to `Coroutine.__init__`.
 Like regular functions, coroutines have a final return value. The coroutine may be ended with a
 ``return`` statement, which causes its return value to be None, but Python does not allow
 ``return`` with an argument inside a generator. Instead, to specify its return value, the
-coroutine should raise a `StopIteration` with its return value as an argument::
+coroutine should raise a ``StopIteration`` with its return value as an argument::
 
 	raise StopIteration(value)
 
@@ -243,7 +243,7 @@ class WaitForCallback(WaitCondition):
 		self.bound_coro = None
 
 	def __call__(self, value=None):
-		"""Cause `value` to be the return value of the WaitCondition."""
+		"""Cause ``value`` to be the return value of the WaitCondition."""
 		assert self.bound_coro
 		self.bound_coro.resume(value)
 		self.bound_coro = None
@@ -251,7 +251,7 @@ class WaitForCallback(WaitCondition):
 	def throw(self, exc=None):
 		"""Raise an Exception in the bound coroutine.
 
-		If `exc` is None, ``sys.exc_info()`` will be raised instead.
+		If ``exc`` is None, ``sys.exc_info()`` will be raised instead.
 		"""
 
 		if exc is None:
@@ -302,7 +302,7 @@ class WaitForCallbackArgs(WaitCondition):
 		self.bound_coro = None
 
 	def __call__(self, *args):
-		"""Cause `args` to be the return value of the WaitCondition."""
+		"""Cause ``args`` to be the return value of the WaitCondition."""
 		assert self.bound_coro
 		self.bound_coro.resume(args)
 		self.bound_coro = None
@@ -310,7 +310,7 @@ class WaitForCallbackArgs(WaitCondition):
 	def throw(self, exc=None):
 		"""Raise an Exception in the bound coroutine.
 
-		If `exc` is None, ``sys.exc_info()`` will be raised instead.
+		If ``exc`` is None, ``sys.exc_info()`` will be raised instead.
 		"""
 
 		if exc is None:
@@ -360,7 +360,7 @@ class CoroutineMutex(object):
 	giving access to a server may be protected by a CoroutineMutex to ensure that multiple
 	transactions are not started at once.
 
-	CoroutineMutex objects have one important method, `acquire()`. This returns a `WaitCondition`,
+	CoroutineMutex objects have one important method, `acquire`. This returns a `WaitCondition`,
 	which will resume the coroutine once the mutex is available. The WaitCondition will result
 	in a context manager, as specified in PEP 342, which should immediately be passed to a ``with``
 	statement::
@@ -743,7 +743,7 @@ class Coroutine(WaitCondition):
 		"""
 		Forcefully stop running this coroutine.
 
-		If the coroutine is not in `STATE_RUNNING` or `STATE_SUSPENDED`, this does nothing.
+		If the coroutine is not in ``STATE_RUNNING`` or ``STATE_SUSPENDED``, this does nothing.
 		A suspended coroutine will have its current wait condition unbound; its completion
 		callback will then be called with a CoroutineKilledException.
 		"""

@@ -1,4 +1,11 @@
-"""TCP connection handling classes."""
+"""
+TCP connection handling classes.
+
+Rather than manually setting sockets nonblocking and calling `Reactor.wait_for_readable`
+and `Reactor.wait_for_writable` directly, the `TCPConnection` and `TCPServer` classes
+are provided for higher-level nonblocking connection handling. See their documentation for
+details and examples.
+"""
 
 # Chiral, copyright (c) 2007 Jacob Potter
 # This program is free software; you can redistribute it and/or modify
@@ -39,6 +46,14 @@ class ConnectionOverflowException(ConnectionException):
 class TCPConnection(coroutine.Coroutine):
 	"""
 	Provides basic interface for TCP connections.
+
+	This can be used directly as a client, or subclassed and instantiated by `TCPServer`.
+	It provides higher-level utility functions to open and close the connection, read lines
+	or exact number of bytes, and send from strings or files.
+
+	The `read_line`, `read_exactly`, and `recv` functions use an internal buffer to store data
+	after it is read. This is intended to be transparent; however, users should avoid mixing the
+	``TCPConnection`` helper functions with direct socket acces.
 	"""
 
 	def connection_handler(self):
@@ -46,7 +61,8 @@ class TCPConnection(coroutine.Coroutine):
 		Main event processing loop.
 
 		The connection_handler() method will be run as a Coroutine when the TCPConnection
-		is initialized. It should be overridden in the derived class.
+		is initialized. If the TCPConnection is going to be created from a `TCPServer`, then
+		this function should be overridden in the derived class.
 		"""
 		raise NotImplementedError
 		yield
@@ -56,31 +72,28 @@ class TCPConnection(coroutine.Coroutine):
 		Completion callback.
 
 		This will be run as a completion callback when the connection handler 
-		terminates; see ``chiral.core.coroutine.Coroutine.add_completion_callback()``.
+		terminates; see `Coroutine.add_completion_callback`.
 
-		By default, this swallows ConnectionClosedExceptions, and closes the connection.
+		By default, this swallows `ConnectionClosedException`, and closes the connection.
 		It may be overridden in a derived class.
 		"""
 
 		if exception:
-			_exc_type, exc_value, _exc_traceback = exception
-			if isinstance(exc_value, ConnectionClosedException):
+			if isinstance(exception[0], ConnectionClosedException):
 				return (None, None)
 
 		if self.remote_sock is not None:
 			self.close()
 
 	def close(self):
-		"""
-		Call self.close() on a connection to perform a clean shutdown.
-		"""
+		"""Perform a clean shutdown."""
 		if self.remote_sock is not None:
 			self.remote_sock.close()
 			self.remote_sock = None
 
 	@coroutine.as_coro
 	def _read_line_coro(self, max_len, delimiter):
-		"""Helper coroutine created by read_line if data is not immediately available."""
+		"""Helper coroutine created by `read_line` if data is not immediately available."""
 		while True:
 			# Wait for the socket to be readable
 			yield reactor.wait_for_readable(self.remote_sock)
@@ -115,10 +128,13 @@ class TCPConnection(coroutine.Coroutine):
 
 	@coroutine.returns_waitcondition
 	def read_line(self, max_len = 1024, delimiter = "\r\n"):
-		"""
-		Read a line (delimited by any member of the "delimiters" tuple) from
-		the client. If more than max_length characters are read before a
-		delimiter is found, a ConnectionOverflowException will be raised.
+		"""Read a line from the client.
+
+		:param max_len:
+			If more than ``max_len`` characters are read before ``delimiter`` is
+			found, a ConnectionOverflowException will be raised.
+		:param delimiter:
+			End-of-line character or sequence. This will not be included in the returned line.
 		"""
 
 		# Check if the delimiter is already in the buffer.
@@ -156,11 +172,10 @@ class TCPConnection(coroutine.Coroutine):
 	@coroutine.as_coro
 	def read_exactly(self, length, read_increment = 32768):
 		"""
-		Read and return exactly length bytes.
+		Read and return exactly ``length`` bytes.
 
-		If length is less than or equal to read_increment, then only length octets
-		will be read from the socket; otherwise, data will be read read_increment
-		octets at a time.
+		:param length: Number of bytes to return.
+		:param read_increment: Number of bytes to low-level read from the socket at a time.
 		"""
 
 		# If we have enough bytes already, just return them
@@ -201,7 +216,21 @@ class TCPConnection(coroutine.Coroutine):
 	def recv(self, buflen):
 		"""
 		Read data from the socket.
+
+		This behaves analogously to the ``recv`` system call, but will read data from
+		the internal buffer if available.
 		"""
+
+		if self._buffer:
+			if len(self._buffer) > buflen:
+				out = self._buffer[:buflen]
+				self._buffer = self._buffer[buflen:]
+			else:
+				out = self._buffer
+				self._buffer = ""
+
+			raise StopIteration(out)
+			
 		while True:
 			# Try reading the data.
 			try:
@@ -218,7 +247,7 @@ class TCPConnection(coroutine.Coroutine):
 
 	@coroutine.as_coro
 	def _sendall_coro(self, data):
-		"""Helper coroutine created by sendall if not all data could be sent."""
+		"""Helper coroutine created by `sendall` if not all data could be sent."""
 		while data:
 
 			yield reactor.wait_for_readable(self)
@@ -236,9 +265,10 @@ class TCPConnection(coroutine.Coroutine):
 	@coroutine.returns_waitcondition
 	def sendall(self, data):
 		"""
-		Send all of data to the socket. The send() method and underlying system
-		call are not guaranteed to write all the supplied data; sendall() will
-		loop if necessary until all data is written.
+		Send all of ``data`` to the socket.
+
+		The `send` method and underlying system call are not guaranteed to write
+		all the supplied data; ``sendall`` will loop if necessary until all data is written.
 		"""
 
 		# Try writing the data.
@@ -263,9 +293,11 @@ class TCPConnection(coroutine.Coroutine):
 	@coroutine.as_coro
 	def send(self, data):
 		"""
-		Send data, and return the number of bytes actually sent. Note that the
-		send() system call does not guarantee that all of data will actually be
-		sent; in most cases, sendall() should be used.
+		Send data, and return the number of bytes actually sent.
+
+		This behaves analogously to the ``send`` system call. Note that ``send``
+		does not guarantee that all of ``data`` will actually be sent; in most cases,
+		sendall() should be used instead.
 		"""
 		while True:
 			# Try writing the data.
@@ -285,8 +317,6 @@ class TCPConnection(coroutine.Coroutine):
 	def sendfile(self, infile, offset, length):
 		"""
 		Send up to len bytes of data from infile, starting at offset.
-		Returns the amount actually written, which may be less than
-		all the data given. Use sendall() if all the data must be sent.
 		"""
 
 		if not _SENDFILE_AVAILABLE:
@@ -324,9 +354,9 @@ class TCPConnection(coroutine.Coroutine):
 		Connect or reconnect to the remote server.
 
 		If this TCPConnection was created by passing an existing socket object to __init__,
-		then connect() cannot be used and will raise RuntimeError.
+		then ``connect`` cannot be used and will raise RuntimeError.
 
-		Otherwise, the TCPConnection must be connected with connect() before it can be used,
+		Otherwise, the TCPConnection must be connected with ``connect`` before it can be used,
 		and may be reconnected after any method raises a ConnectionClosedException.
 		"""
 
@@ -366,8 +396,7 @@ class TCPConnection(coroutine.Coroutine):
 		If the corresponding socket has already been created and connected, i.e. by a
 		TCPServer calling `socket.accept()`, then it should be passed in as ``sock``.
 		Otherwise, a new socket is created. The TCPConnection is then in an
-		unconnected state; to connect to remote_addr, call `connect()` on the
-		TCPConnection.
+		unconnected state; to connect to remote_addr, call `connect`.
 		"""
 		
 		self.remote_addr = remote_addr
@@ -383,6 +412,7 @@ class TCPConnection(coroutine.Coroutine):
 
 		# Set the socket nonblocking. Socket objects have some magic that
 		# pylint doesn't grok, so suppress its "no setblocking member" warning.
+
 		self.remote_sock.setblocking(0) # pylint: disable-msg=E1101
 
 		self._buffer = ""
@@ -399,8 +429,8 @@ class TCPServer(coroutine.Coroutine):
 	socket which listens on a TCP port and accepts connections;
 	each connection is tracked and closed when necessary.
 
-	The connection_class attribute sets the class that will be created for
-	new connections; it should be derived from TCPConnection.
+	The ``connection_class`` attribute sets the class that will be created for
+	new connections; it should be derived from `TCPConnection`.
 	"""
 
 	connection_class = TCPConnection
