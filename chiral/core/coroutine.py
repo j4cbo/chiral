@@ -813,13 +813,16 @@ class Coroutine(WaitCondition):
 
 class _chiral_introspection(object):
 	"""Module-level introspection routines."""
-	def main(self):
+
+	@staticmethod
+	def main():
 		"""main info: return a list of all current coroutines."""
 		coro_list = _COROUTINES.values()
 		coro_list.sort(key = id)
 		return coro_list
 
-	def coroutine(self, coro_id):
+	@staticmethod
+	def coroutine(coro_id):
 		"""Look up the coroutine with the given id and return its introspection_info()."""
 		try:
 			coro = _COROUTINES[int(coro_id)]

@@ -1,4 +1,59 @@
-"""Chiral Introspector."""
+"""
+Chiral Introspector.
+
+Introduction
+------------
+
+Chiral defines an interface-neutral way for classes and modules to allow themselves to be
+queried and modified at runtime. The reference implementation of this is `chiral.web.introspector`,
+which provides a lightweight Web interface, but it is intended that other mechanisms (such as
+command-line) could be included as well.
+
+Modules mark themselves as introspectable by defining a ``_chiral_introspection`` class. When the
+introspector's main page is loaded, it searches through ``sys.modules`` for all introspectable
+modules; the output of ``_chiral_introspection().main()`` will be rendered and included in the
+introspection index.
+
+``chiral.web.introspector`` also provides an interface to `chiral.core.xreload` for reloading modules
+on the fly. If a module has a _CHIRAL_RELOADABLE attribute that evaluates to True, a "Reload Now" link
+will be provided for the module.
+
+Formatting
+----------
+
+``_chiral_introspection`` routines return data in an interface agnostic Python-object format, which
+the introspector then formats safely into HTML. Objects are converted recursively, as such:
+
+``tuple``
+	Each member of the tuple is processed, and the results are concatenated.
+``list``
+	Each entry is processed, and the results are formatted as a bulleted list (``<ul>``)
+``dict``, ``UserDict``
+	Each value is processed; the output is formatted as a bulleted list (``<ul>``) of "key: value" entries.
+``basestring``
+	Strings are rendered depending on their contents:
+
+	- An empty string becomes a line break (``<br/>``)
+	-
+	  Strings starting with "@" become buttons. The string should be of the format "@module:command:item:label".
+	  Clicking the button will cause the function ``cmd_(command)`` in ``module``'s ``_chiral_introspection``
+	  to be executed, with ``item`` as a parameter.
+	- Other strings are shown as-is.
+``object``
+	Other objects will be checked for a ``_chiral_introspect`` attribute. If the attribute exists, it will be
+	called, and expected to return a ``(funcname, item)`` tuple. The object is then rendered as a link;
+	clicking the link will run ``_chiral_introspection.(funcname)`` in whichever module the object is defined
+	in. The object's ``repr()`` appears as the link text.
+
+
+Object Introspection
+--------------------
+
+As mentioned above, objects with a _chiral_introspect attribute will produce a link that maps to a function
+in _chiral_introspection. The output of this function will produce its own page; this can be used by modules
+that keep track of all instances of some class (such as `chiral.core.coroutine`) to provide detailed introspection
+information for each object.
+"""
 
 # Chiral, copyright (c) 2007 Jacob Potter
 # This program is free software; you can redistribute it and/or modify
@@ -30,14 +85,14 @@ class Introspector(object):
 
 				# Button link...
 				try:
-					mod, ns, objid, name, value = obj[1:].split(":")
+					mod, ns, objid, value = obj[1:].split(":")
 				except ValueError:
 					pass
 				else:
 					target_url = rooturl + mod + "/" + ns + "/" + objid
 					fl = "<form method=\"post\" action=\"" + cgi.escape(target_url, True)
-					fl += "\"><input type=\"submit\" name=\"" + cgi.escape(name, True)
-					fl += "\" value=\"" + cgi.escape(value, True) + "\"/></form>"
+					fl += "\"><input type=\"submit\" name=\"cmd\" value=\""
+					fl += cgi.escape(value, True) + "\"/></form>"
 					return fl
 
 			if obj == '':
@@ -163,7 +218,7 @@ class _chiral_introspection(object):
 	def main(self):
 		return [ ( 
 			"Garbage collector: %d objects tracked; " % len(gc.get_objects()),
-			"@chiral.web.introspector:gc:gc:collect:Collect Now"
+			"@chiral.web.introspector:gc:collect:Collect Now"
 		) ]
 
 	def index(self, item=None):
@@ -176,7 +231,7 @@ class _chiral_introspection(object):
 			m = [ ]
 
 			if hasattr(mod, '_CHIRAL_RELOADABLE'):
-				item = ("Source: %s - " % mod.__file__, "@chiral.web.introspector:reload:%s:reload:Reload Now" % modname)
+				item = ("Source: %s - " % mod.__file__, "@chiral.web.introspector:reload:%s:Reload Now" % modname)
 				if hasattr(mod, '__chiral_reload_count__'):
 					item = (
 						item[0], item[1],

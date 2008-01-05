@@ -1,4 +1,6 @@
-"""Framework functions"""
+"""
+Framework functions.
+"""
 
 # Chiral, copyright (c) 2007 Jacob Potter
 # This program is free software; you can redistribute it and/or modify
