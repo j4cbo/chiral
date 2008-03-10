@@ -250,7 +250,7 @@ class TCPConnection(coroutine.Coroutine):
 		"""Helper coroutine created by `sendall` if not all data could be sent."""
 		while data:
 
-			yield reactor.wait_for_readable(self)
+			yield reactor.wait_for_readable(self.remote_sock)
 
 			try:
 				res = self.remote_sock.send(data)
